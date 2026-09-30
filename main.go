@@ -39,6 +39,7 @@ func run(prog string, args []string, stdout, stderr io.Writer) int {
 		"DSN。MySQL (user:pass@tcp(host:3306)/dbname) または Postgres (postgres://user:pass@host:5432/dbname)。環境変数 HABAKIRI_DSN でも可")
 	railsDir := fs.String("rails", "", "Rails アプリのルート(または app/models)を静的に読む。DB 接続不要")
 	yii1Dir := fs.String("yii1", "", "Yii 1.x アプリのルート(または protected/models)を静的に読む。DB 接続不要")
+	relationsFile := fs.String("relations", "", "メタデータの関係一覧(TSV: 子<TAB>列<TAB>親)を読む。関連を実行時に組み立てるアプリ向け。子と親はテーブル名か、静的ソースのモデルのクラス名")
 	schemaJSON := fs.String("schema-json", "", "--dump-schema で書き出したスキャン結果を DSN の代わりに読む(DB に繋げない環境へスキーマだけ持ち出して解析する)")
 	graph := fs.String("graph", "", "グラフの見方: physical(DB が強制する FK のみ)/ logical(ORM の宣言のみ)/ combined(統合)。既定は入力に応じる(DB だけ → physical、静的ソースだけ → logical、併用 → combined)")
 	compareGraphs := fs.Bool("compare-graphs", false, "Physical / Logical / Combined を同じ条件(hub・CASCADE 縮約・頂点集合を combined から固定)で解析して比べる。DB と静的ソースの併用が前提")
@@ -94,7 +95,7 @@ func run(prog string, args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	hasPhysical := *dsn != "" || *schemaJSON != ""
-	hasLogical := *railsDir != "" || *yii1Dir != ""
+	hasLogical := *railsDir != "" || *yii1Dir != "" || *relationsFile != ""
 	if !hasPhysical && !hasLogical {
 		fs.Usage()
 		return 2
@@ -135,6 +136,14 @@ func run(prog string, args []string, stdout, stderr io.Writer) int {
 		errln(prog+":", err)
 		return 1
 	}
+	if *relationsFile != "" {
+		rels, err := LoadMetadataRelations(*relationsFile)
+		if err != nil {
+			errln(prog+":", err)
+			return 1
+		}
+		logic = AddMetadataRelations(logic, *relationsFile, rels)
+	}
 	if *dumpSchema != "" {
 		if phys == nil {
 			errln(prog + ": --dump-schema は DB スキャン(--dsn)の結果を書き出す。静的ソースだけでは使えない")
@@ -146,7 +155,7 @@ func run(prog string, args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	if *compareGraphs && (phys == nil || logic == nil) {
-		errln(prog + ": --compare-graphs は DB(--dsn / --schema-json)と静的ソース(--rails / --yii1)の併用が前提。片方だけでは比べる相手が無い")
+		errln(prog + ": --compare-graphs は DB(--dsn / --schema-json)と静的ソース(--rails / --yii1 / --relations)の併用が前提。片方だけでは比べる相手が無い")
 		return 2
 	}
 	var sc *ScanResult

@@ -43,6 +43,10 @@ type Coverage struct {
 	RelationsDeclared int `json:"relations_declared"`
 	Relations         int `json:"relations"`
 	Duplicates        int `json:"duplicates"`
+	// MetadataRelations: そのうちメタデータの関係一覧(--relations)に由来する本数。
+	// MetadataOnly: 一覧だけが根拠の本数(ORM の宣言には無い)。一覧を渡さなければ 0。
+	MetadataRelations int `json:"metadata_relations,omitempty"`
+	MetadataOnly      int `json:"metadata_only,omitempty"`
 
 	// Edge Diff の分類ごとの本数(通常枠と hub 枠の合計)。
 	Both         int `json:"both"`
@@ -78,6 +82,18 @@ func BuildCoverage(sc *ScanResult, ed EdgeDiff) Coverage {
 		if n > 0 {
 			c.Relations++
 			c.RelationsDeclared += n
+			meta := 0
+			for _, ev := range fk.Evidences {
+				if ev.Source == SourceMetadata {
+					meta++
+				}
+			}
+			if meta > 0 {
+				c.MetadataRelations++
+				if meta == n {
+					c.MetadataOnly++
+				}
+			}
 		}
 	}
 	c.Duplicates = c.RelationsDeclared - c.Relations

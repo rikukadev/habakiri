@@ -225,6 +225,9 @@ func writeCoverageText(p func(string, ...any), cr CoverageReport) {
 	p("  物理 FK に関わるテーブル   %s(保有率 %s)", count(c.PhysicalRead, c.TablesWithPhysicalFK), rateText(c.PhysicalFKRate))
 	p("  ORM が解析したテーブル     %s", count(c.LogicalRead, c.LogicalTables))
 	p("  宣言された関係             %s 本(宣言 %d 件、両側からの重複 %d)", count(c.LogicalRead, c.Relations), c.RelationsDeclared, c.Duplicates)
+	if c.MetadataRelations > 0 {
+		p("    うちメタデータの一覧から %d 本(一覧だけが根拠 %d 本)", c.MetadataRelations, c.MetadataOnly)
+	}
 	p("  DB と宣言が一致            %d 本", c.Both)
 	p("  Logical Only / Physical Only / 判定不能   %d / %d / %d 本", c.LogicalOnly, c.PhysicalOnly, c.Undetermined)
 	if c.CoocRead {
@@ -356,13 +359,13 @@ func WriteComparisonHTML(w io.Writer, c *Comparison) {
 <tr><th>DB のテーブル</th><td>%s</td></tr>
 <tr><th>物理 FK に関わるテーブル</th><td>%s(保有率 %s)</td></tr>
 <tr><th>ORM が解析したテーブル</th><td>%s</td></tr>
-<tr><th>宣言された関係</th><td>%s 本(宣言 %d 件、両側からの重複 %d)</td></tr>
+<tr><th>宣言された関係</th><td>%s 本(宣言 %d 件、両側からの重複 %d)%s</td></tr>
 <tr><th>DB と宣言が一致</th><td>%d 本</td></tr>
 <tr><th>Logical Only / Physical Only / 判定不能</th><td>%d / %d / %d 本</td></tr>
 <tr><th>共起(Observed)</th><td>%s</td></tr>
 </table></div>`,
 		count(cv.PhysicalRead, cv.DBTables), count(cv.PhysicalRead, cv.TablesWithPhysicalFK), rateText(cv.PhysicalFKRate),
-		count(cv.LogicalRead, cv.LogicalTables), count(cv.LogicalRead, cv.Relations), cv.RelationsDeclared, cv.Duplicates,
+		count(cv.LogicalRead, cv.LogicalTables), count(cv.LogicalRead, cv.Relations), cv.RelationsDeclared, cv.Duplicates, esc(metaText(cv)),
 		cv.Both, cv.LogicalOnly, cv.PhysicalOnly, cv.Undetermined, esc(cooc))
 	if len(c.Coverage.Groups) > 0 {
 		p(`<div class="tw"><table><tr><th>グループ(combined の分割)</th><th>テーブル</th><th>DB にある</th><th>物理 FK あり</th><th>保有率</th><th></th></tr>`)
@@ -453,4 +456,12 @@ Observed Only は生 SQL / 動的クエリの調査対象。</p>`)
 			d.A.Kind, d.B.Kind, ariText(d.ARI), ariText(d.ARIConnected), d.ConnectedVertices, dash(moved), dash(cuts))
 	}
 	p(`</table></div>`)
+}
+
+// metaText は HTML の「宣言された関係」に添える、メタデータの一覧に由来する本数。
+func metaText(c Coverage) string {
+	if c.MetadataRelations == 0 {
+		return ""
+	}
+	return fmt.Sprintf("。うちメタデータの一覧から %d 本(一覧だけが根拠 %d 本)", c.MetadataRelations, c.MetadataOnly)
 }

@@ -1,0 +1,7 @@
+# 関連を実行時に組み立てるアプリのメタデータから書き出した一覧(の例)
+child	column	parent
+Contact	account_id	Account	# 宣言と同じ関係(証拠が足される)
+contact	manager_id	Contact
+answers	form_id, form_rev	forms
+Ghost	ghost_id	Account
+
