@@ -81,6 +81,10 @@ code { font-family:ui-monospace,Menlo,monospace; font-size:.85em; }
 		esc(a.Schema), a.TableCount, a.FKCount, len(a.Hubs), a.HubThreshold,
 		len(a.CascadeGroups), len(a.Bridges), len(a.Isolated))
 
+	if a.Comparison != nil {
+		WriteComparisonHTML(w, a.Comparison)
+	}
+
 	if a.Partition != nil && len(a.Partition.Groups) > 1 {
 		partSVG := render(WriteSVGPartition)
 		p(`<h2>分割案の図 — グループ = コンテナ、跨ぐ ✂ = サービス間 API 面</h2>

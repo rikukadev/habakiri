@@ -1,0 +1,34 @@
+{
+  "schema": "ms_a",
+  "dialect": "postgres",
+  "tables": [
+    "account",
+    "article",
+    "article_tag",
+    "attachment",
+    "audit_log",
+    "category",
+    "comment",
+    "customer",
+    "invoice",
+    "payment",
+    "product",
+    "purchase",
+    "purchase_item",
+    "shipment",
+    "tag"
+  ],
+  "fks": [
+    {
+      "constraint": "purchase_item_purchase_id_fkey",
+      "child_table": "purchase_item",
+      "child_columns": [
+        "purchase_id"
+      ],
+      "parent_table": "purchase",
+      "delete_rule": "NO ACTION",
+      "all_not_null": true
+    }
+  ],
+  "cross_schema_fks": null
+}
