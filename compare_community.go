@@ -28,6 +28,10 @@ type CommunityView struct {
 	// Edges: 非 hub の縮約ノード対。名前は縮約ノードの代表テーブル名。
 	Edges      []Pair
 	Modularity float64
+	// Unobserved: この見方の入力がそもそも見ていないテーブル(DB に無い
+	// テーブルを physical の見方で、など)。どのコミュニティにも属さない点は
+	// 孤立と同じだが、「辺が無いと確認した」のではない。nil なら全部観測済み。
+	Unobserved map[string]bool
 }
 
 // CommunityViewOf は解析結果から比較用の分割を取り出す。
@@ -119,6 +123,8 @@ type CommunitySide struct {
 	// Isolated: 共通頂点のうち、このグラフではどのコミュニティにも属さない数。
 	// ARI を読むときの前提(多いほど、ARI はこのグラフの観測の薄さに引っ張られる)。
 	Isolated int `json:"isolated"`
+	// Unobserved: 共通頂点のうち、このグラフの入力が見ていない数(Isolated とは別)。
+	Unobserved int `json:"unobserved"`
 }
 
 // CommunityMatch は A のコミュニティと B のコミュニティの対応 1 組。
@@ -137,6 +143,11 @@ const (
 	// ことがあるので、reassigned とは分ける。
 	MoveIsolatedInA = "isolated_in_a"
 	MoveIsolatedInB = "isolated_in_b"
+	// MoveUnobservedInA / MoveUnobservedInB: 片方の入力がそのテーブルを見て
+	// いない(DB に無い・モデルを解析していない)。孤立と違い、辺が無いことすら
+	// 確かめていない。
+	MoveUnobservedInA = "unobserved_in_a"
+	MoveUnobservedInB = "unobserved_in_b"
 )
 
 // MovedTable は所属が変わったテーブル 1 件。From / To の空文字は孤立。
@@ -213,14 +224,20 @@ func DiffCommunities(a, b CommunityView) CommunityDiff {
 	for _, t := range verts {
 		ca, okA := a.Assign[t]
 		cb, okB := b.Assign[t]
-		if okA {
+		switch {
+		case okA:
 			commA[ca] = true
-		} else {
+		case a.Unobserved[t]:
+			d.A.Unobserved++
+		default:
 			d.A.Isolated++
 		}
-		if okB {
+		switch {
+		case okB:
 			commB[cb] = true
-		} else {
+		case b.Unobserved[t]:
+			d.B.Unobserved++
+		default:
 			d.B.Isolated++
 		}
 		if okA && okB {
@@ -259,9 +276,17 @@ func DiffCommunities(a, b CommunityView) CommunityDiff {
 				d.Moved = append(d.Moved, MovedTable{Table: t, From: ca, To: cb, Kind: MoveReassigned})
 			}
 		case okA && !okB:
-			d.Moved = append(d.Moved, MovedTable{Table: t, From: ca, Kind: MoveIsolatedInB})
+			kind := MoveIsolatedInB
+			if b.Unobserved[t] {
+				kind = MoveUnobservedInB
+			}
+			d.Moved = append(d.Moved, MovedTable{Table: t, From: ca, Kind: kind})
 		case !okA && okB:
-			d.Moved = append(d.Moved, MovedTable{Table: t, To: cb, Kind: MoveIsolatedInA})
+			kind := MoveIsolatedInA
+			if a.Unobserved[t] {
+				kind = MoveUnobservedInA
+			}
+			d.Moved = append(d.Moved, MovedTable{Table: t, To: cb, Kind: kind})
 		}
 	}
 

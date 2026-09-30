@@ -18,16 +18,16 @@
       purchase 圏: 3 テーブル中 DB にあるもの 3、うち物理 FK あり 3(100%)
 
 ■ 見方ごとの分割
-  physical FK 10 本 / コミュニティ 2 / 孤立 6 / Q=0.29
+  physical FK 10 本 / コミュニティ 2 / 孤立 6 / 未観測 0 / Q=0.29
       account 圏(4): audit_log, customer, invoice, shipment
       payment(3): payment, product, purchase_item
       孤立(6): article, article_tag, attachment, category, comment, tag
-  logical  FK 18 本 / コミュニティ 3 / 孤立 1 / Q=0.43
+  logical  FK 18 本 / コミュニティ 3 / 孤立 0 / 未観測 1 / Q=0.43
       account 圏(6): article, article_tag, attachment, category, comment, tag
       payment(3): payment, product, purchase_item
       purchase 圏(3): customer, invoice, shipment
-      孤立(1): audit_log
-  combined FK 20 本 / コミュニティ 3 / 孤立 0 / Q=0.44
+      未観測(1 — この見方の入力がテーブル自体を見ていない): audit_log
+  combined FK 20 本 / コミュニティ 3 / 孤立 0 / 未観測 0 / Q=0.44
       account 圏(7): article, article_tag, attachment, audit_log, category, comment, tag
       payment(3): payment, product, purchase_item
       purchase 圏(3): customer, invoice, shipment
@@ -60,7 +60,7 @@
       article: (physical では孤立) → account 圏
       article_tag: (physical では孤立) → account 圏
       attachment: (physical では孤立) → account 圏
-      audit_log: account 圏 → (logical では孤立)
+      audit_log: account 圏 → (logical では未観測)
       category: (physical では孤立) → account 圏
       comment: (physical では孤立) → account 圏
       tag: (physical では孤立) → account 圏
@@ -75,7 +75,7 @@
       comment: (physical では孤立) → account 圏
       tag: (physical では孤立) → account 圏
   logical × combined: ARI 0.82(共通頂点 13)/ 両方で非孤立の頂点だけなら 1.00(12)
-      audit_log: (logical では孤立) → account 圏
+      audit_log: (logical では未観測) → account 圏
       片方でだけコミュニティを跨ぐ辺(両方で跨ぐ辺は 0 本):
         customer × payment: logical=辺なし / combined=跨ぐ
 

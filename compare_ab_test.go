@@ -275,3 +275,44 @@ func TestCLICompareGraphsHTML(t *testing.T) {
 		}
 	}
 }
+
+// #50: その見方の入力がテーブル自体を見ていないときは「孤立」ではなく「未観測」。
+func TestCommunityDiffUnobserved(t *testing.T) {
+	t.Run("DB に無いテーブルは physical で未観測", func(t *testing.T) {
+		// mergeFixture: 宣言側の post_tag / tag は DB に無い
+		c := BuildComparison(PrepareComparison(MergeScans(mergeFixture()), 0, 0, true))
+		g := c.Graphs["physical"]
+		if strings.Join(g.Unobserved, ",") != "post_tag,tag" {
+			t.Errorf("physical の未観測: %v(孤立: %v)", g.Unobserved, g.Isolated)
+		}
+		for _, tbl := range g.Isolated {
+			if tbl == "post_tag" || tbl == "tag" {
+				t.Errorf("DB が見ていない %s を孤立と数えた", tbl)
+			}
+		}
+		for _, d := range c.CommunityDiff.Pairs {
+			for _, m := range d.Moved {
+				if (m.Table == "post_tag" || m.Table == "tag") && d.A.Kind == "physical" && m.Kind != MoveUnobservedInA {
+					t.Errorf("%s × %s: %s の移動の種類 = %s", d.A.Kind, d.B.Kind, m.Table, m.Kind)
+				}
+			}
+			if d.A.Kind == "physical" && d.A.Unobserved != 2 {
+				t.Errorf("%s × %s: physical の未観測数 = %d", d.A.Kind, d.B.Kind, d.A.Unobserved)
+			}
+		}
+	})
+
+	t.Run("モデルの無いテーブルは logical で未観測、DB が見た FK の無いテーブルは physical で孤立", func(t *testing.T) {
+		c := BuildComparison(loadAB(t, "b"))
+		if l := c.Graphs["logical"]; strings.Join(l.Unobserved, ",") != "audit_log" || len(l.Isolated) != 0 {
+			t.Errorf("logical: 未観測 %v / 孤立 %v", l.Unobserved, l.Isolated)
+		}
+		if p := c.Graphs["physical"]; len(p.Unobserved) != 0 || len(p.Isolated) != 6 {
+			t.Errorf("physical: 未観測 %v / 孤立 %v", p.Unobserved, p.Isolated)
+		}
+		out := string(runCLI(t, "--schema-json", "testdata/multisource/b.scan.json", "--yii1", "testdata/multisource", "--compare-graphs"))
+		if !strings.Contains(out, "audit_log: (logical では未観測) → account 圏") {
+			t.Errorf("text に未観測の移動が無い:\n%s", out)
+		}
+	})
+}
