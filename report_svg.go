@@ -22,10 +22,21 @@ import (
 	"oss.terrastruct.com/util-go/go2"
 )
 
-// WriteSVG は D2 スクリプトを経由して SVG を書き出す。
+// WriteSVG は「切る前」の図(橋を ✂ で強調)を書き出す。
 func WriteSVG(w io.Writer, a *Analysis) error {
 	var script bytes.Buffer
 	WriteD2(&script, a)
+	return renderD2(w, script.String())
+}
+
+// WriteSVGCut は「切った後」の図(橋を除去した世界)を書き出す。
+func WriteSVGCut(w io.Writer, a *Analysis) error {
+	var script bytes.Buffer
+	WriteD2Cut(&script, a)
+	return renderD2(w, script.String())
+}
+
+func renderD2(w io.Writer, script string) error {
 
 	ruler, err := textmeasure.NewRuler()
 	if err != nil {
@@ -33,7 +44,7 @@ func WriteSVG(w io.Writer, a *Analysis) error {
 	}
 	ctx := log.WithDefault(context.Background())
 	renderOpts := &d2svg.RenderOpts{Pad: go2.Pointer(int64(20))}
-	diagram, _, err := d2lib.Compile(ctx, script.String(), &d2lib.CompileOptions{
+	diagram, _, err := d2lib.Compile(ctx, script, &d2lib.CompileOptions{
 		LayoutResolver: func(string) (d2graph.LayoutGraph, error) {
 			return d2dagrelayout.DefaultLayout, nil
 		},

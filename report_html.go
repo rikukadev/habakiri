@@ -13,10 +13,14 @@ import (
 
 // WriteHTML はレポートページを書き出す。
 func WriteHTML(w io.Writer, a *Analysis) {
-	var svg bytes.Buffer
+	var svg, svgCut bytes.Buffer
 	if err := WriteSVG(&svg, a); err != nil {
 		svg.Reset()
 		svg.WriteString("<p>図の生成に失敗: " + html.EscapeString(err.Error()) + "</p>")
+	}
+	if err := WriteSVGCut(&svgCut, a); err != nil {
+		svgCut.Reset()
+		svgCut.WriteString("<p>図の生成に失敗: " + html.EscapeString(err.Error()) + "</p>")
 	}
 
 	p := func(format string, args ...any) { _, _ = fmt.Fprintf(w, format+"\n", args...) }
@@ -61,9 +65,14 @@ code { font-family:ui-monospace,Menlo,monospace; font-size:.85em; }
 		esc(a.Schema), a.TableCount, a.FKCount, len(a.Hubs), a.HubThreshold,
 		len(a.CascadeGroups), len(a.Bridges), len(a.Isolated))
 
-	p(`<figure>%s<figcaption class="sub">E-R 図(D2/dagre で機械生成)。箱 = テーブル(CASCADE 集約はメンバーを行で列挙、
-単独テーブルは FK 列を行で列挙)。実線矢印 = FK(子 → 親、ラベルは FK 列名)、太線 ✂ = 橋、破線紫 = 宣言外の疑い。
-色 = 重み(グレー NULL可 / 青 NOT NULL / 朱 CASCADE 級)。破線の容器 = ブロック / 島グリッド。</figcaption></figure>`, svg.String())
+	p(`<h2>切る前</h2>
+<figure>%s<figcaption class="sub">現状の E-R 図(D2/dagre で機械生成)。箱 = テーブル(CASCADE 集約はメンバーを行で列挙、
+単独テーブルは FK 列を行で列挙)。実線矢印 = FK(子 → 親、ラベルは FK 列名)、<b>太線 ✂ = 橋(切ると良い場所)</b>、
+破線紫 = 宣言外の疑い。色 = 重み(グレー NULL可 / 青 NOT NULL / 朱 CASCADE 級)。</figcaption></figure>`, svg.String())
+
+	p(`<h2>切った後</h2>
+<figure>%s<figcaption class="sub">橋をすべて切った世界。離れて浮かぶ塊 = 独立できる単位(ブロック)。
+紫の破線が残っていれば、それが切断後もアプリ層に残る結合(API 化の対象)。</figcaption></figure>`, svgCut.String())
 
 	if len(a.Bridges) > 0 {
 		p(`<h2>橋 = 切断点(%d 本)</h2><div class="tw"><table>

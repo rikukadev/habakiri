@@ -22,8 +22,18 @@ func d2Quote(s string) string {
 	return s
 }
 
-// WriteD2 はスクリプトを書き出す。
+// WriteD2 は「切る前」のスクリプト(橋を ✂ で強調)を書き出す。
 func WriteD2(w io.Writer, a *Analysis) {
+	writeD2(w, a, true)
+}
+
+// WriteD2Cut は「切った後」のスクリプト(橋を除去した世界)を書き出す。
+// ブロック = 橋除去後の成分なので、橋を消せば各ブロックが独立した島として並ぶ。
+func WriteD2Cut(w io.Writer, a *Analysis) {
+	writeD2(w, a, false)
+}
+
+func writeD2(w io.Writer, a *Analysis, includeBridges bool) {
 	p := func(format string, args ...any) { _, _ = fmt.Fprintf(w, format+"\n", args...) }
 
 	p(`# habakiri — %s(%d テーブル / %d FK / 橋 %d 本)`, a.Schema, a.TableCount, a.FKCount, len(a.Bridges))
@@ -37,21 +47,8 @@ func WriteD2(w io.Writer, a *Analysis) {
   suspectW: {style: {stroke: "#c4b5e0"; stroke-dash: 3; font-color: "#c4b5e0"}}
 }`)
 
-	// hub と凡例(テキストブロック)
-	var hubLines []string
-	for _, h := range a.Hubs {
-		hubLines = append(hubLines, fmt.Sprintf("- %s(次数 %d)", h.Node, h.Degree))
-	}
-	p(`meta: |md
-## %s
-%d テーブル / %d FK / 橋 %d 本
-
-**hub(除外・共有 or 複製で扱う):**
-%s
-
-線 = FK(実線・矢印は子→親)/ 破線紫 = 宣言外の疑い
-色 = 重み: グレー NULL可 / 青 NOT NULL / 朱 CASCADE 級 / 太線 = 橋 ✂
-| {near: top-left}`, a.Schema, a.TableCount, a.FKCount, len(a.Bridges), strings.Join(hubLines, "\n"))
+	// 図に入れるのはグラフ(テーブル・FK・橋・疑い)だけ。統計・hub 一覧・
+	// 島・孤立などの文字情報は --html / テキスト出力の持ち場(ユーザー指示)。
 
 	// ノードのパス(ブロックはコンテナに入れる)と、テーブルごとの FK 列
 	path := map[string]string{}
@@ -62,17 +59,13 @@ func WriteD2(w io.Writer, a *Analysis) {
 		}
 	}
 
-	for bi, block := range a.Blocks {
-		container := ""
-		if len(block) > 1 {
-			id := fmt.Sprintf("b%d", bi)
-			p(`%s: {label: "ブロック B%d"; style: {stroke-dash: 3; fill: transparent}}`, id, bi)
-			container = id + "."
-		}
+	// ブロックの枠は描かない(ユーザー判断で一旦不要)。切った後の図では
+	// 橋が消えることで、ブロック = 独立成分として自然に離れて配置される。
+	for _, block := range a.Blocks {
 		members := append([]string(nil), block...)
 		sort.Strings(members)
 		for _, name := range members {
-			path[name] = container + d2Quote(name)
+			path[name] = d2Quote(name)
 			p(`%s: {shape: sql_table}`, path[name])
 			if ms, ok := a.CascadeGroups[name]; ok {
 				// CASCADE 集約: メンバーを行として列挙
@@ -148,9 +141,12 @@ func WriteD2(w io.Writer, a *Analysis) {
 			}
 			cls := weightClass(fkWeight(fk))
 			label := strings.Join(fk.ChildCols, ",")
-			if e.Bridge {
+			switch {
+			case e.Bridge && !includeBridges:
+				// 切った後の世界: 橋は存在しない
+			case e.Bridge:
 				p(`%s -> %s: "✂ %s" {class: [%s; bridge]}`, from, to, label, cls)
-			} else {
+			default:
 				p(`%s -> %s: "%s" {class: [%s]}`, from, to, label, cls)
 			}
 		}
@@ -187,37 +183,4 @@ func WriteD2(w io.Writer, a *Analysis) {
 		p(`%s -- %s: "%s" {class: [%s]}`, path[fn], path[tn], lbl, cls)
 	}
 
-	// hub 経由のみの島(グリッドコンテナ)
-	if len(a.Islands) > 0 {
-		p(`islands: {`)
-		p(`  label: "hub 経由のみで繋がる島(%d)— hub との参照を値化すれば独立できる"`, len(a.Islands))
-		p(`  grid-columns: 5`)
-		p(`  style: {stroke-dash: 3; fill: transparent}`)
-		for _, is := range a.Islands {
-			label := is.Name
-			if is.Tables > 1 {
-				label = fmt.Sprintf("%s (+%d)", is.Name, is.Tables-1)
-			}
-			p(`  %s: {label: %q}`, d2Quote(is.Name), label)
-		}
-		p(`}`)
-	}
-
-	// 孤立(テキスト)。1 行に全部並べるとキャンバスがその幅まで伸びるので、
-	// 6 個ずつの箇条書きに畳む(Magento の孤立 110 個で実測 25,000px になった)。
-	if len(a.Isolated) > 0 {
-		var lines []string
-		for i := 0; i < len(a.Isolated); i += 6 {
-			end := i + 6
-			if end > len(a.Isolated) {
-				end = len(a.Isolated)
-			}
-			lines = append(lines, "- "+strings.Join(a.Isolated[i:end], ", "))
-		}
-		p(`isolated: |md
-**孤立 %d(FK なし — 今日でも動かせる)**
-
-%s
-| {near: bottom-left}`, len(a.Isolated), strings.Join(lines, "\n"))
-	}
 }
