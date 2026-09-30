@@ -75,11 +75,15 @@ func Analyze(sc *ScanResult, hubThreshold int) *Analysis {
 		}
 	}
 
-	// 1. 束ね → 2. CASCADE 縮約
+	// 1. 束ね → 2. hub 除外 → 3. CASCADE 縮約。
+	//
+	// hub が先、縮約が後。逆にすると壊れることが Magento 2(295 テーブル)で
+	// 実証された: store / eav_attribute のような hub へも掃除目的の CASCADE が
+	// 大量に張られており、先に縮約すると hub 経由で 190 テーブルが
+	// 「ライフサイクル一体」に融合した。CASCADE が意味するのは親子の従属で
+	// あって、hub への CASCADE は集約の証拠ではない。hub を先に外せば、
+	// 縮約は局所的な親子(注文ファミリー等)に限定される。
 	edges := BuildEdges(sc.FKs)
-	edges, a.CascadeGroups = Contract(edges)
-
-	// 3. hub 除外
 	nodeSet := map[string]bool{}
 	for p := range edges {
 		nodeSet[p.A] = true
@@ -90,6 +94,16 @@ func Analyze(sc *ScanResult, hubThreshold int) *Analysis {
 	}
 	a.HubThreshold = hubThreshold
 	edges, a.Hubs = RemoveHubs(edges, hubThreshold)
+	edges, a.CascadeGroups = Contract(edges)
+
+	// 縮約が異常肥大したら警告(全体の 25% 超)。CASCADE の使われ方が
+	// 「従属の掃除」寄りのスキーマで、集約推定として信用できない印。
+	for root, ms := range a.CascadeGroups {
+		if len(ms)*4 > len(nodeSet) {
+			a.Notes = append(a.Notes, fmt.Sprintf(
+				"CASCADE 集約 [%s] が %d テーブル(全体の 25%%超)に達した — この規模は集約ではなく「hub への掃除 CASCADE」の融合を疑う。--hub を下げて hub を増やすと分解されることが多い", root, len(ms)))
+		}
+	}
 
 	// 4. 橋 → 5. ブロック
 	bridges := Bridges(edges)
