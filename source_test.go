@@ -5,10 +5,11 @@ import (
 	"testing"
 )
 
+// fkIndex: "child(col1,col2)→parent" で引く(同一テーブル対に複数 FK がありうる)。
 func fkIndex(fks []FK) map[string]FK {
 	m := map[string]FK{}
 	for _, fk := range fks {
-		m[fk.ChildTable+"→"+fk.ParentTable] = fk
+		m[fk.ChildTable+"("+strings.Join(fk.ChildCols, ",")+")→"+fk.ParentTable] = fk
 	}
 	return m
 }
@@ -21,7 +22,7 @@ func TestScanRails(t *testing.T) {
 	idx := fkIndex(sc.FKs)
 
 	t.Run("belongs_to は NOT NULL 相当(Rails 5+ の既定)", func(t *testing.T) {
-		fk, ok := idx["posts→users"]
+		fk, ok := idx["posts(user_id)→users"]
 		if !ok {
 			t.Fatalf("posts→users が無い: %v", idx)
 		}
@@ -35,7 +36,7 @@ func TestScanRails(t *testing.T) {
 	})
 
 	t.Run("optional: true は NULL可相当", func(t *testing.T) {
-		fk, ok := idx["posts→taxonomy"] // Category は self.table_name = taxonomy
+		fk, ok := idx["posts(category_id)→taxonomy"] // Category は self.table_name = taxonomy
 		if !ok {
 			t.Fatalf("posts→taxonomy が無い(self.table_name が効いていない): %v", idx)
 		}
@@ -45,7 +46,7 @@ func TestScanRails(t *testing.T) {
 	})
 
 	t.Run("class_name + foreign_key の明示", func(t *testing.T) {
-		fk, ok := idx["comments→users"]
+		fk, ok := idx["comments(author_id)→users"]
 		if !ok {
 			t.Fatalf("comments→users が無い: %v", idx)
 		}
@@ -55,7 +56,7 @@ func TestScanRails(t *testing.T) {
 	})
 
 	t.Run("polymorphic は as: の受け手へ展開", func(t *testing.T) {
-		if _, ok := idx["comments→posts"]; !ok {
+		if _, ok := idx["comments(commentable_id)→posts"]; !ok {
 			t.Errorf("commentable → Post が引けていない: %v", idx)
 		}
 	})
@@ -72,12 +73,22 @@ func TestScanRails(t *testing.T) {
 			}
 		}
 		// (3) 複数行宣言の class_name を読める(comments→users が幽霊 authors にならない)
-		if _, ok := idx["comments→authors"]; ok {
+		if _, ok := idx["comments(author_id)→authors"]; ok {
 			t.Error("複数行の class_name を取りこぼして幽霊テーブルを作った")
 		}
 		// (4) 名前空間モデルは demodulize + tableize
-		if _, ok := idx["comments→access_grants"]; !ok {
+		if _, ok := idx["comments(access_grant_id)→access_grants"]; !ok {
 			t.Errorf("Doorkeeper::AccessGrant が demodulize されていない: %v", idx)
+		}
+	})
+
+	t.Run("with_options のオプションがブロック内の宣言に効く", func(t *testing.T) {
+		fk, ok := idx["posts(edited_by_id)→users"]
+		if !ok {
+			t.Fatalf("with_options 内の belongs_to :editor が読めていない: %v", idx)
+		}
+		if fk.AllNotNull {
+			t.Error("ブロックの optional: true が効いていない")
 		}
 	})
 
@@ -90,7 +101,7 @@ func TestScanRails(t *testing.T) {
 	})
 
 	t.Run("callback の宣言外言及は注記(エッジではない)", func(t *testing.T) {
-		if _, ok := idx["posts→search_entries"]; ok {
+		if _, ok := idx["posts(search_entry_id)→search_entries"]; ok {
 			t.Error("callback の言及がエッジになっている(注記に留めるべき)")
 		}
 		found := false
@@ -113,7 +124,7 @@ func TestScanYii1(t *testing.T) {
 	idx := fkIndex(sc.FKs)
 
 	t.Run("BELONGS_TO / HAS_MANY の両側宣言は 1 本に畳む", func(t *testing.T) {
-		fk, ok := idx["comment→post"] // {{comment}} → {{post}}(プレフィクス剥がし込み)
+		fk, ok := idx["comment(post_id)→post"] // {{comment}} → {{post}}(プレフィクス剥がし込み)
 		if !ok {
 			t.Fatalf("comment→post が無い: %v", idx)
 		}
@@ -132,16 +143,16 @@ func TestScanYii1(t *testing.T) {
 	})
 
 	t.Run("tableName の tbl_ 直書きと {{}} の両対応", func(t *testing.T) {
-		if _, ok := idx["post→tbl_user"]; !ok {
+		if _, ok := idx["post(author_id)→tbl_user"]; !ok {
 			t.Errorf("post→tbl_user が無い: %v", idx)
 		}
 	})
 
 	t.Run("MANY_MANY は中間テーブルの FK 2 本を合成", func(t *testing.T) {
-		if _, ok := idx["post_category→post"]; !ok {
+		if _, ok := idx["post_category(post_id)→post"]; !ok {
 			t.Errorf("post_category→post が無い: %v", idx)
 		}
-		if _, ok := idx["post_category→category"]; !ok {
+		if _, ok := idx["post_category(category_id)→category"]; !ok {
 			t.Errorf("post_category→category が無い: %v", idx)
 		}
 	})
