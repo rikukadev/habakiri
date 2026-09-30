@@ -40,7 +40,7 @@ $ habakiri --dsn "..." --yii1 /path/to/yii1app            # 併用: DB の FK �
 | `--cooc-weight=false` | 共起を分割グラフに算入しない(レポートのみ。CI の静的モード) |
 | `--patterns FILE` | 橋の「切断後に書くもの」語彙の差し替え(JSON) |
 | `--emit-contract FILE` | 橋から FK DROP マイグレーションのスケルトン生成(前提ゲートをコメント同梱) |
-| `--churn DIR` / `--criticality FILE` | 切り出し 1 本目候補のランキング(橋 昇順 × 変更頻度 降順 × 事故コスト 昇順。静的ソースと併用) |
+| `--churn DIR` / `--criticality FILE` | 切り出し 1 本目候補のランキング(橋 昇順 × 変更頻度 降順 × 事故コスト 昇順。静的ソースと併用)。変更頻度はリネームを追って数え、モデルファイルを対応づけられないユニットは 0 ではなく `churn -`(未計測)として末尾に別枠 |
 
 DSN は環境変数 `HABAKIRI_DSN` でも渡せる。
 

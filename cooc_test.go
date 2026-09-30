@@ -157,6 +157,7 @@ func TestBuildCandidates(t *testing.T) {
 	a := Analyze(partitionFixture(), 5)
 	cands := BuildCandidates(a,
 		map[string]int{"posts": 50, "post_likes": 30, "orders": 5},
+		map[string]int{"posts": 1, "post_likes": 1, "orders": 1, "badges": 1},
 		map[string]float64{"orders": 9})
 	if len(cands) == 0 {
 		t.Fatal("候補が空")

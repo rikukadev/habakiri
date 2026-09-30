@@ -206,7 +206,7 @@ func run(prog string, args []string, stdout, stderr io.Writer) int {
 		a.Partition.SelectLevel(*services)
 	}
 	if *churnDir != "" || *critFile != "" {
-		tChurn := map[string]int{}
+		var tChurn, tFiles map[string]int // nil = --churn 無し(全ユニット未計測)
 		if *churnDir != "" {
 			if len(sc.FileTables) == 0 {
 				errln(prog + ": --churn は静的ソース(--rails/--yii1)と併用してください(ファイル→テーブル対応が要る)")
@@ -217,7 +217,7 @@ func run(prog string, args []string, stdout, stderr io.Writer) int {
 				errln(prog+":", err)
 				return 1
 			}
-			tChurn = tableChurn(sc.FileTables, fc)
+			tChurn, tFiles = tableChurn(sc.FileTables, fc)
 		}
 		tCrit := map[string]float64{}
 		if *critFile != "" {
@@ -228,7 +228,7 @@ func run(prog string, args []string, stdout, stderr io.Writer) int {
 				return 1
 			}
 		}
-		a.Candidates = BuildCandidates(a, tChurn, tCrit)
+		a.Candidates = BuildCandidates(a, tChurn, tFiles, tCrit)
 	}
 
 	writeFile := func(path string, write func(f *os.File)) bool {
