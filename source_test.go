@@ -422,6 +422,17 @@ func TestScanYii1Resolution(t *testing.T) {
 				t.Error("models ディレクトリの外(components)をモデルとして読んだ")
 			}
 		}
+		// 置き場所ごとの件数(#45: どこを読んだかが出力から分かること)
+		found := false
+		for _, n := range sc.Notes {
+			if strings.Contains(n, "読んだモデル 3 個") && strings.Contains(n, "protected/models 2") &&
+				strings.Contains(n, "protected/modules/account/models 1") {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("置き場所ごとの件数の注が無い: %v", sc.Notes)
+		}
 	})
 
 	t.Run("自己参照を捨てない", func(t *testing.T) {

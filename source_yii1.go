@@ -161,6 +161,30 @@ func ScanYii1(dir string) (*ScanResult, error) {
 	if len(dupes) > 0 {
 		res.Notes = append(res.Notes, "yii1: 同名のモデルクラスが複数ある — パス順で先のものを採った: "+strings.Join(dupes, ", "))
 	}
+	// どこを読んだかを出す(読まなかった場所が出力から分からないのが一番困る)。
+	// モジュールを持つアプリでだけ出す — models/ だけのアプリでは自明なので。
+	if protected != "" {
+		if fi, err := os.Stat(filepath.Join(protected, "modules")); err == nil && fi.IsDir() {
+			perDir := map[string]int{}
+			for _, m := range models {
+				rel := sourceOrigin(dir, m.path, 0)
+				if i := strings.LastIndex(rel, "/models/"); i >= 0 {
+					rel = rel[:i+len("/models")]
+				}
+				perDir[rel]++
+			}
+			var locs []string
+			for d := range perDir {
+				locs = append(locs, d)
+			}
+			sort.Strings(locs)
+			var parts []string
+			for _, d := range locs {
+				parts = append(parts, fmt.Sprintf("%s %d", d, perDir[d]))
+			}
+			res.Notes = append(res.Notes, fmt.Sprintf("yii1: 読んだモデル %d 個 — %s", len(models), strings.Join(parts, " / ")))
+		}
+	}
 	res.FileTables = map[string]string{}
 	for _, m := range models {
 		if m.path != "" {
