@@ -436,6 +436,28 @@ func railsToScan(dir string, models map[string]*railsModel) *ScanResult {
 					cc, strings.Join(mentions, ", ")))
 		}
 	}
+	// 生 SQL(execute / sanitize 済み文字列)の書き込み先([強])
+	tableSet := map[string]bool{}
+	for t := range tables {
+		tableSet[t] = true
+	}
+	for _, cc := range classes {
+		m := models[cc]
+		own := tableOf(models, cc)
+		var hits []string
+		for _, t := range extractRawWriteTables(m.fileSrc) {
+			if t == own || !tableSet[t] {
+				continue
+			}
+			hits = append(hits, t)
+			res.Suspects = append(res.Suspects, Suspect{FromTable: own, ToTable: t, Strong: true})
+		}
+		if len(hits) > 0 {
+			strongNotes = append(strongNotes,
+				fmt.Sprintf("[強] %s: 生SQLで %s へ書き込み — 宣言に現れない実結合", cc, strings.Join(hits, ", ")))
+		}
+	}
+
 	res.Notes = append(res.Notes, strongNotes...)
 	res.Notes = append(res.Notes, weakNotes...)
 

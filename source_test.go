@@ -228,3 +228,29 @@ func TestInflector(t *testing.T) {
 		t.Errorf("tableize(Status) = %s", tableize("Status"))
 	}
 }
+
+func TestRawSQLExtraction(t *testing.T) {
+	sc, err := ScanYii1("testdata/yii1app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := map[string]bool{}
+	for _, s := range sc.Suspects {
+		if s.Strong && s.FromTable == "post" {
+			found[s.ToTable] = true
+		}
+	}
+	// createCommand の DELETE FROM {{attachment}} と ビルダ ->update('tbl_user')
+	if !found["attachment"] || !found["tbl_user"] {
+		t.Errorf("生SQL書き込み先が Suspect に無い: %+v", sc.Suspects)
+	}
+	noteOK := false
+	for _, n := range sc.Notes {
+		if strings.Contains(n, "生SQL") && strings.Contains(n, "attachment") {
+			noteOK = true
+		}
+	}
+	if !noteOK {
+		t.Errorf("生SQL注記が無い: %v", sc.Notes)
+	}
+}
