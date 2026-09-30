@@ -204,10 +204,10 @@ func Bridges(edges map[Pair]*Edge) []Pair {
 		list = append(list, p)
 	}
 	sort.Slice(list, func(i, j int) bool {
-		if list[i].A != list[i].A {
+		if list[i].A != list[j].A {
 			return list[i].A < list[j].A
 		}
-		return list[i].A < list[j].A || (list[i].A == list[j].A && list[i].B < list[j].B)
+		return list[i].B < list[j].B
 	})
 	adj := map[string][]half{}
 	for i, p := range list {

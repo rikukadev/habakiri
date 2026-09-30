@@ -1,6 +1,6 @@
 module github.com/rikukadev/habakiri
 
-go 1.26.1
+go 1.26.6
 
 require (
 	github.com/go-sql-driver/mysql v1.10.1
