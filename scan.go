@@ -20,6 +20,12 @@ type FK struct {
 	// AllNotNull: 子側の列が**すべて** NOT NULL なら true。1 列でも NULL 許容なら
 	// 「参照が無い状態が存在できる」= 存在依存ではない、として弱い結合に分類する。
 	AllNotNull bool `json:"all_not_null"`
+	// Evidences: この関係の根拠(provenance.go)。既定の JSON には出さない —
+	// 既存出力を変えないため。--show-evidence で出る。
+	Evidences []Evidence `json:"-"`
+	// Nullable: NULL 許容の三値。AllNotNull は「NOT NULL と確認できた」の意味で
+	// 残し、NULL可 と Unknown の区別はこちらが持つ。
+	Nullable Nullability `json:"-"`
 }
 
 // ScanResult はスキャンの生データ。
@@ -139,6 +145,7 @@ func Scan(db *sql.DB) (*ScanResult, error) {
 	sort.Strings(order)
 	for _, k := range order {
 		fk := byConstraint[k]
+		stampPhysical(fk)
 		if fk.ParentSchema != "" {
 			res.CrossFKs = append(res.CrossFKs, *fk)
 			continue

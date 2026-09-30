@@ -117,6 +117,7 @@ func ScanPostgres(db *sql.DB) (*ScanResult, error) {
 	sort.Strings(order)
 	for _, k := range order {
 		fk := byConstraint[k]
+		stampPhysical(fk)
 		if fk.ParentSchema != "" {
 			res.CrossFKs = append(res.CrossFKs, *fk)
 			continue

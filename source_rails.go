@@ -29,6 +29,8 @@ type railsAssoc struct {
 	dependent  bool   // destroy / delete_all / destroy_async
 	through    bool
 	as         string // as: :xxx(ポリモーフィックの受け手)
+	file       string // 宣言のあるファイル(concern 経由なら concern のファイル)
+	line       int    // 宣言の行番号(Evidence の Origin)
 }
 
 type railsModel struct {
@@ -125,7 +127,7 @@ func ScanRails(dir string) (*ScanResult, error) {
 			return nil, err
 		}
 		before := len(models)
-		parseRailsFile(string(raw), models, concerns)
+		parseRailsFile(string(raw), f, models, concerns)
 		if len(models) > before {
 			for c, m := range models {
 				if m.fileSrc == string(raw) && fileOf[c] == "" {
@@ -170,36 +172,44 @@ func ScanRails(dir string) (*ScanResult, error) {
 //	           optional: true
 //
 // の形が多数派で、行単位の読みでは class_name を全部取りこぼす(実測)。
-func joinContinuations(src string) []string {
+//
+// 2 つ目の戻り値は畳んだ各行の開始行番号(1 始まり)。
+func joinContinuations(src string) ([]string, []int) {
 	raw := strings.Split(src, "\n")
 	var out []string
+	var starts []int
 	var buf string
-	for _, line := range raw {
+	start := 0
+	for i, line := range raw {
 		if buf != "" {
 			buf += " " + strings.TrimSpace(line)
 		} else {
 			buf = line
+			start = i + 1
 		}
 		t := strings.TrimSpace(buf)
 		if strings.HasSuffix(t, ",") || strings.HasSuffix(t, "(") {
 			continue
 		}
 		out = append(out, buf)
+		starts = append(starts, start)
 		buf = ""
 	}
 	if buf != "" {
 		out = append(out, buf)
+		starts = append(starts, start)
 	}
-	return out
+	return out, starts
 }
 
-func parseRailsFile(src string, models map[string]*railsModel, concerns map[string]*railsConcern) {
+func parseRailsFile(src, path string, models map[string]*railsModel, concerns map[string]*railsConcern) {
 	var cur *railsModel
 	var curConcern *railsConcern
 	// with_options ブロックのオプションを積む。ブロック境界は do/end の
 	// 近似追跡(モデルファイルの平坦な構造が前提の割り切り)。
 	var optStack []string
-	for _, line := range joinContinuations(src) {
+	lines, starts := joinContinuations(src)
+	for li, line := range lines {
 		if m := reClass.FindStringSubmatch(line); m != nil {
 			cur = &railsModel{class: m[1], parent: m[2], fileSrc: src}
 			models[m[1]] = cur
@@ -256,7 +266,7 @@ func parseRailsFile(src string, models map[string]*railsModel, concerns map[stri
 				rest += " " + o
 			}
 		}
-		a := railsAssoc{kind: m[1], name: m[2]}
+		a := railsAssoc{kind: m[1], name: m[2], file: path, line: starts[li]}
 		if c := reClassName.FindStringSubmatch(rest); c != nil {
 			a.className = strings.TrimPrefix(c[1], "::")
 		}
@@ -326,7 +336,8 @@ func railsToScan(dir string, models map[string]*railsModel) *ScanResult {
 	}
 
 	// dependent: を宣言している側(親)を先に索引化: 子モデル名 → 親モデル名
-	cascadeParents := map[string]map[string]bool{} // child class → set(parent class)
+	// 値は dependent: を宣言している has_many / has_one(CASCADE の証拠位置)。
+	cascadeParents := map[string]map[string]railsAssoc{} // child class → parent class → 宣言
 	for _, pc := range classes {
 		p := models[pc]
 		for _, a := range p.assocs {
@@ -338,29 +349,43 @@ func railsToScan(dir string, models map[string]*railsModel) *ScanResult {
 				child = classify(a.name)
 			}
 			if cascadeParents[child] == nil {
-				cascadeParents[child] = map[string]bool{}
+				cascadeParents[child] = map[string]railsAssoc{}
 			}
-			cascadeParents[child][pc] = true
+			if _, dup := cascadeParents[child][pc]; !dup {
+				cascadeParents[child][pc] = a
+			}
 		}
 	}
 
-	addFK := func(childClass, parentClass, col string, notNull bool, note string) {
+	addFK := func(childClass, parentClass, col string, notNull bool, note string, decl railsAssoc) {
 		child := tableOf(models, childClass)
 		parent := tableOf(models, parentClass)
 		if child == parent {
 			return // 自己参照はグラフ層でも落とすが、ここでも作らない
 		}
-		rule := "NO ACTION"
-		if cascadeParents[childClass][parentClass] {
-			rule = "CASCADE"
-		}
 		name := fmt.Sprintf("ar:%s.%s", underscore(childClass), col)
 		if note != "" {
 			name += "(" + note + ")"
 		}
+		// 必須性は belongs_to の宣言値(Rails 5+ は既定で必須)。DB の NOT NULL を
+		// 確認したわけではないので、重みの理由は logical_* になる(provenance.go)。
+		nullable := NullableTrue
+		if notNull {
+			nullable = NullableFalse
+		}
+		evs := []Evidence{{Source: SourceRails, Origin: sourceOrigin(dir, decl.file, decl.line),
+			Constraint: name, DeleteRule: "NO ACTION", Nullable: nullable}}
+		rule := "NO ACTION"
+		if dep, ok := cascadeParents[childClass][parentClass]; ok {
+			// 親側の dependent: が CASCADE の根拠。宣言位置を別の証拠として残す。
+			rule = "CASCADE"
+			evs = append(evs, Evidence{Source: SourceRails, Origin: sourceOrigin(dir, dep.file, dep.line),
+				Constraint: name, DeleteRule: "CASCADE", Nullable: nullable})
+		}
 		res.FKs = append(res.FKs, FK{
 			Constraint: name, ChildTable: child, ChildCols: []string{col},
 			ParentTable: parent, DeleteRule: rule, AllNotNull: notNull,
+			Nullable: nullable, Evidences: evs,
 		})
 		tables[child], tables[parent] = true, true
 	}
@@ -388,7 +413,7 @@ func railsToScan(dir string, models map[string]*railsModel) *ScanResult {
 							target = classify(pa.name)
 						}
 						if target == cc {
-							addFK(cc, pc, col, !a.optional, "polymorphic")
+							addFK(cc, pc, col, !a.optional, "polymorphic", a)
 							found = true
 						}
 					}
@@ -404,7 +429,7 @@ func railsToScan(dir string, models map[string]*railsModel) *ScanResult {
 			if target == "" {
 				target = classify(a.name)
 			}
-			addFK(cc, target, col, !a.optional, "")
+			addFK(cc, target, col, !a.optional, "", a)
 		}
 	}
 

@@ -39,5 +39,12 @@ func LoadSchemaJSON(path string) (*ScanResult, error) {
 		return nil, fmt.Errorf("schema-json: %s に schema が無い(--dump-schema の出力を渡す)", path)
 	}
 	sort.Strings(sc.Tables)
+	// ダンプは DB スキャンの写しなので、証拠は physical として付け直す。
+	for i := range sc.FKs {
+		stampPhysical(&sc.FKs[i])
+	}
+	for i := range sc.CrossFKs {
+		stampPhysical(&sc.CrossFKs[i])
+	}
 	return &sc, nil
 }
