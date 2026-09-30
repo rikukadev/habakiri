@@ -10,11 +10,13 @@ package main
 
 import (
 	"database/sql"
-	"io"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -43,6 +45,7 @@ func run() int {
 	services := fs.Int("services", 0, "分割案のグループ数の希望(0 = モジュラリティ最大に任せる)")
 	coocFile := fs.String("cooc", "", "同一 tx 書き込み共起のログ(MySQL general log / Postgres log / 中立形式)")
 	coocWeight := fs.Bool("cooc-weight", true, "共起を分割グラフに算入する(false = レポートのみ。baseline 用の静的モード)")
+	patternsFile := fs.String("patterns", "", "受け皿パターン語彙の差し替え(JSON: {\"1\": \"...\", \"2\": \"...\", \"3\": \"...\"})")
 	baseline := fs.String("baseline", "", "過去の --json 出力と比較し、結合の逆行(新規 FK ペア・hub 契約増・跨ぎ FK 増)があれば exit 3")
 	d2Out := fs.String("d2", "", "D2 スクリプトをこのファイルへ書き出す(d2 out.d2 out.svg で描画)")
 	htmlOut := fs.String("html", "", "図と切断計画をまとめた自己完結 HTML をこのファイルへ書き出す")
@@ -118,6 +121,24 @@ func run() int {
 		}
 		sc.Cooc = cooc
 		sc.CoocNoWeight = !*coocWeight
+	}
+
+	if *patternsFile != "" {
+		raw, err := os.ReadFile(*patternsFile)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, prog+":", err)
+			return 1
+		}
+		var pm map[string]string
+		if err := json.Unmarshal(raw, &pm); err != nil {
+			fmt.Fprintln(os.Stderr, prog+":", err)
+			return 1
+		}
+		for k, v := range pm {
+			if lv, err := strconv.Atoi(k); err == nil {
+				cutPatterns[lv] = v
+			}
+		}
 	}
 
 	a := Analyze(sc, *hub)
