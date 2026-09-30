@@ -1,4 +1,4 @@
-module github.com/rikukadev/carve-poc
+module github.com/rikukadev/habakiri
 
 go 1.26.1
 

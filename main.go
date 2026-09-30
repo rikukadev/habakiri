@@ -4,7 +4,8 @@
 // hub 除外 → 橋検出(Tarjan) → 橋ブロック木を出力。
 // 出力は 3 方向: 今日切れる(橋・孤立) / 目指す境界(ブロック) / 人間が決める(hub)。
 //
-// 名前は未定なので、バイナリ名(os.Args[0])に依存しない書き方をしている。
+// habakiri(天羽々斬): 絡み合った大蛇(スパゲッティ FK)を斬るための剣。
+// 実際に斬るのは人間で、このツールは斬る場所を測って示すところまで。
 package main
 
 import (
@@ -26,8 +27,8 @@ func main() {
 func run() int {
 	prog := filepath.Base(os.Args[0])
 	fs := flag.NewFlagSet(prog, flag.ContinueOnError)
-	dsn := fs.String("dsn", os.Getenv("CARVE_DSN"),
-		"MySQL DSN (user:pass@tcp(host:3306)/dbname)。環境変数 CARVE_DSN でも可")
+	dsn := fs.String("dsn", os.Getenv("HABAKIRI_DSN"),
+		"MySQL DSN (user:pass@tcp(host:3306)/dbname)。環境変数 HABAKIRI_DSN でも可")
 	jsonOut := fs.Bool("json", false, "JSON で出力")
 	mermaid := fs.String("mermaid", "", "Mermaid 図をこのファイルへ書き出す")
 	hub := fs.Int("hub", 0, "hub 判定の次数閾値(0 = 自動: max(6, ノード数の 15%))")
