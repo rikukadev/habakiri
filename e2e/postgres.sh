@@ -48,4 +48,19 @@ diff -u "$root/testdata/postgres-fixture.scan.json" "$tmp" \
   || { rm -f "$tmp"; fail "--dump-schema が testdata/postgres-fixture.scan.json と一致しない"; }
 rm -f "$tmp"
 
+# 合成スキーマ A/B(testdata/multisource)。go test は *.scan.json を食わせて
+# 「FK 整備状況の差が分割を歪める」ことを検証している。その JSON が *.sql を
+# 実 DB に流した結果と一致することをここで見る(SQL だけ直して JSON が古い、を防ぐ)。
+# スキーマを分けてあるので、DSN の search_path で切り替える。
+sep="?"
+case "$DSN" in *\?*) sep="&" ;; esac
+for s in a b; do
+  $PSQL -v ON_ERROR_STOP=1 -q < "$root/testdata/multisource/$s.sql"
+  tmp=$(mktemp)
+  "$BIN" --dsn "${DSN}${sep}search_path=ms_$s" --dump-schema "$tmp" > /dev/null
+  diff -u "$root/testdata/multisource/$s.scan.json" "$tmp" \
+    || { rm -f "$tmp"; fail "multisource/$s.sql のスキャンが $s.scan.json と一致しない"; }
+  rm -f "$tmp"
+done
+
 echo "OK: postgres e2e"

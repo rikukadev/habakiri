@@ -46,6 +46,8 @@ type Analysis struct {
 	// FKs: 全 FK とその出自(--show-evidence のときだけ)。hub へ向かう FK は
 	// Edges に現れないので、出自を漏れなく見せるには別に一覧が要る。
 	FKs []FK `json:"fks,omitempty"`
+	// Comparison: --compare-graphs の結果(compare.go)。
+	Comparison *Comparison `json:"comparison,omitempty"`
 	// showEvidence: 出自の節を出す。unknownAware: NULL 許容の Unknown を
 	// 「NULL可」と書き分ける(併用・--graph 明示・--show-evidence のとき。
 	// 単独解析の既存出力は変えない)。
@@ -591,6 +593,10 @@ func WriteText(w io.Writer, a *Analysis) {
 
 	p("スキーマ %s: %d テーブル / %d FK", a.Schema, a.TableCount, a.FKCount)
 	p("")
+
+	if a.Comparison != nil {
+		WriteComparisonText(w, a.Comparison)
+	}
 
 	if a.Partition != nil && len(a.Partition.Groups) > 1 {
 		p("■ 分割案(Girvan–Newman + モジュラリティ Q=%.2f)— 大物 %d 個への分割",

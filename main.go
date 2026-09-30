@@ -41,6 +41,7 @@ func run(prog string, args []string, stdout, stderr io.Writer) int {
 	yii1Dir := fs.String("yii1", "", "Yii 1.x アプリのルート(または protected/models)を静的に読む。DB 接続不要")
 	schemaJSON := fs.String("schema-json", "", "--dump-schema で書き出したスキャン結果を DSN の代わりに読む(DB に繋げない環境へスキーマだけ持ち出して解析する)")
 	graph := fs.String("graph", "", "グラフの見方: physical(DB が強制する FK のみ)/ logical(ORM の宣言のみ)/ combined(統合)。既定は入力に応じる(DB だけ → physical、静的ソースだけ → logical、併用 → combined)")
+	compareGraphs := fs.Bool("compare-graphs", false, "Physical / Logical / Combined を同じ条件(hub・CASCADE 縮約・頂点集合を combined から固定)で解析して比べる。DB と静的ソースの併用が前提")
 	showEvidence := fs.Bool("show-evidence", false, "各 FK の出自(証拠の位置・DB が強制しているか・NULL 許容・重みの理由)を text / JSON / HTML に出す")
 	dumpSchema := fs.String("dump-schema", "", "スキャン結果(テーブルと FK)を JSON でこのファイルへ書き出す")
 	jsonOut := fs.Bool("json", false, "JSON で出力")
@@ -144,6 +145,10 @@ func run(prog string, args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 	}
+	if *compareGraphs && (phys == nil || logic == nil) {
+		errln(prog + ": --compare-graphs は DB(--dsn / --schema-json)と静的ソース(--rails / --yii1)の併用が前提。片方だけでは比べる相手が無い")
+		return 2
+	}
 	var sc *ScanResult
 	switch {
 	case phys != nil && logic != nil:
@@ -153,6 +158,7 @@ func run(prog string, args []string, stdout, stderr io.Writer) int {
 	default:
 		sc = logic
 	}
+	merged := sc // 射影前(比較はここから 3 つの見方を作る)
 	// --graph を明示したときだけ射影する。既定は入力に応じた見方で、
 	// それは射影なしの sc そのもの(単独ソースの出力を 1 バイトも変えない)。
 	if *graph != "" {
@@ -193,6 +199,9 @@ func run(prog string, args []string, stdout, stderr io.Writer) int {
 	}
 
 	a := Analyze(sc, *hub)
+	if *compareGraphs {
+		a.Comparison = BuildComparison(PrepareComparison(merged, *hub, *services, *coocWeight))
+	}
 	if *services > 0 && a.Partition != nil {
 		a.Partition.SelectLevel(*services)
 	}
