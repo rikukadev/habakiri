@@ -55,7 +55,10 @@ func singularize(s string) string {
 	case strings.HasSuffix(s, "ches"), strings.HasSuffix(s, "shes"),
 		strings.HasSuffix(s, "xes"), strings.HasSuffix(s, "zes"), strings.HasSuffix(s, "ses"):
 		return s[:len(s)-2]
-	case strings.HasSuffix(s, "s") && !strings.HasSuffix(s, "ss"):
+	// "status" / "bonus" / "analysis" のような -us / -ss / -is 語尾は
+	// 末尾 s を剥がすと壊れる(Mastodon 実測: status → statu の幽霊化)
+	case strings.HasSuffix(s, "s") && !strings.HasSuffix(s, "ss") &&
+		!strings.HasSuffix(s, "us") && !strings.HasSuffix(s, "is"):
 		return s[:len(s)-1]
 	default:
 		return s

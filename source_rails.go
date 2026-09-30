@@ -71,6 +71,10 @@ var (
 	reAs        = regexp.MustCompile(`\bas:\s*:(\w+)`)
 	reCallback  = regexp.MustCompile(`^\s*(before|after|around)_(save|create|update|destroy|commit|validation)\b`)
 	reConst     = regexp.MustCompile(`\b([A-Z][A-Za-z0-9]+)\b`)
+	// with_options のオプションはブロック内の全宣言に効く(Mastodon が多用する形)。
+	reWithOptions = regexp.MustCompile(`^\s*with_options\s+(.+?)\s+do\s*(\|[^|]*\|)?\s*$`)
+	reBlockOpen   = regexp.MustCompile(`(\bdo\s*(\|[^|]*\|)?\s*$)|(^\s*(def|if|unless|case|while|until|begin|module|class)\b)`)
+	reBlockEnd    = regexp.MustCompile(`^\s*end\b`)
 )
 
 // ScanRails は Rails アプリ(または app/models 直接)を読む。
@@ -143,14 +147,28 @@ func joinContinuations(src string) []string {
 
 func parseRailsFile(src string, models map[string]*railsModel) {
 	var cur *railsModel
+	// with_options ブロックのオプションを積む。ブロック境界は do/end の
+	// 近似追跡(モデルファイルの平坦な構造が前提の割り切り)。
+	var optStack []string
 	for _, line := range joinContinuations(src) {
 		if m := reClass.FindStringSubmatch(line); m != nil {
 			cur = &railsModel{class: m[1], parent: m[2], fileSrc: src}
 			models[m[1]] = cur
+			optStack = optStack[:0]
 			continue
 		}
 		if cur == nil {
 			continue
+		}
+		switch {
+		case reWithOptions.MatchString(line):
+			optStack = append(optStack, reWithOptions.FindStringSubmatch(line)[1])
+		case reBlockOpen.MatchString(line):
+			optStack = append(optStack, "")
+		case reBlockEnd.MatchString(line):
+			if len(optStack) > 0 {
+				optStack = optStack[:len(optStack)-1]
+			}
 		}
 		if m := reTableName.FindStringSubmatch(line); m != nil {
 			cur.tableName = m[1]
@@ -166,6 +184,11 @@ func parseRailsFile(src string, models map[string]*railsModel) {
 			continue
 		}
 		rest := m[3]
+		for _, o := range optStack { // ブロックのオプションを行のオプションに合成
+			if o != "" {
+				rest += " " + o
+			}
+		}
 		a := railsAssoc{kind: m[1], name: m[2]}
 		if c := reClassName.FindStringSubmatch(rest); c != nil {
 			a.className = strings.TrimPrefix(c[1], "::")
@@ -332,7 +355,10 @@ func railsToScan(dir string, models map[string]*railsModel) *ScanResult {
 		var mentions []string
 		seen := map[string]bool{}
 		for _, c := range reConst.FindAllString(m.fileSrc, -1) {
-			if _, isModel := models[c]; isModel && !declared[c] && !seen[c] {
+			// 実テーブルを持つモデルへの言及だけがヒントになる
+			// (ApplicationRecord / PORO はノイズ)
+			if mm, ok := models[c]; ok && isARModel(models, c) && !mm.abstract &&
+				c != "ApplicationRecord" && !declared[c] && !seen[c] {
 				mentions = append(mentions, c)
 				seen[c] = true
 			}
