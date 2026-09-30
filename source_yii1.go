@@ -35,7 +35,7 @@ var (
 	reYiiTable = regexp.MustCompile(`function\s+tableName\s*\(\)[^{]*\{[^}]*?return\s+['"]([^'"]+)['"]`)
 	reYiiRel   = regexp.MustCompile(`['"](\w+)['"]\s*=>\s*array\s*\(\s*self::(BELONGS_TO|HAS_MANY|HAS_ONE|MANY_MANY)\s*,\s*['"](\w+)['"]\s*,\s*['"]([^'"]+)['"]`)
 	reYiiMM    = regexp.MustCompile(`^\s*([\w.{}]+)\s*\(\s*([\w]+)\s*,\s*([\w]+)\s*\)\s*$`)
-	reYiiCb    = regexp.MustCompile(`function\s+(beforeSave|afterSave|beforeDelete|afterDelete|afterFind)\s*\(`)
+	reYiiCb    = regexp.MustCompile(`function\s+(beforeSave|afterSave|beforeDelete|afterDelete|beforeValidate|afterValidate|beforeFind|afterFind|afterConstruct|behaviors)\s*\(`)
 )
 
 // yiiTableName は {{x}} / tbl_x の表記ゆれを剥がす。
@@ -171,13 +171,13 @@ func yiiToScan(dir string, models map[string]*yiiModel) *ScanResult {
 		}
 	}
 
-	// Yii1 は relations にカスケードを書けないので、callback の他モデル言及は必ず注記する。
+	// 宣言外の他モデル言及は全モデルで注記する(エッジにはしない)。
+	// Yii1 は relations にカスケードを書けず beforeDelete に手書きされがちなので、
+	// callback / behaviors 持ちは「強」、それ以外(メソッドからの参照)は「弱」。
 	reConstPhp := regexp.MustCompile(`\b([A-Z]\w+)::model\s*\(|new\s+([A-Z]\w+)\s*\(`)
+	var strongNotes, weakNotes []string
 	for _, cc := range classes {
 		m := models[cc]
-		if !reYiiCb.MatchString(m.fileSrc) {
-			continue
-		}
 		declared := map[string]bool{cc: true}
 		for _, r := range m.relations {
 			declared[r.target] = true
@@ -194,13 +194,21 @@ func yiiToScan(dir string, models map[string]*yiiModel) *ScanResult {
 				mseen[c] = true
 			}
 		}
-		if len(mentions) > 0 {
-			sort.Strings(mentions)
-			res.Notes = append(res.Notes,
-				fmt.Sprintf("%s は beforeDelete/afterSave 等を持ち、宣言外の %s に触れている(Yii1 はカスケードが callback に書かれがち — 結合の疑い)",
+		if len(mentions) == 0 {
+			continue
+		}
+		sort.Strings(mentions)
+		if reYiiCb.MatchString(m.fileSrc) {
+			strongNotes = append(strongNotes,
+				fmt.Sprintf("[強] %s: beforeDelete/afterSave/behaviors 等 + 宣言外の %s への言及 — Yii1 はカスケードが callback に書かれがち",
 					cc, strings.Join(mentions, ", ")))
+		} else {
+			weakNotes = append(weakNotes,
+				fmt.Sprintf("[弱] %s: メソッドから宣言外の %s への言及", cc, strings.Join(mentions, ", ")))
 		}
 	}
+	res.Notes = append(res.Notes, strongNotes...)
+	res.Notes = append(res.Notes, weakNotes...)
 
 	res.Notes = append(res.Notes,
 		"yii1 ソース: relations() に必須性/カスケードの宣言が無いため重みは一律 1。DB スキャン(--dsn)との併用を推奨")
