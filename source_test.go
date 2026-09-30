@@ -76,9 +76,13 @@ func TestScanRails(t *testing.T) {
 		if _, ok := idx["comments(author_id)→authors"]; ok {
 			t.Error("複数行の class_name を取りこぼして幽霊テーブルを作った")
 		}
-		// (4) 名前空間モデルは demodulize + tableize
-		if _, ok := idx["comments(access_grant_id)→access_grants"]; !ok {
-			t.Errorf("Doorkeeper::AccessGrant が demodulize されていない: %v", idx)
+		// (4) app/models に居ない gem のモデルは対応表で引く。demodulize して
+		// access_grants という実在しないテーブルを作らない(#44)
+		if _, ok := idx["comments(access_grant_id)→oauth_access_grants"]; !ok {
+			t.Errorf("Doorkeeper::AccessGrant が oauth_access_grants に写っていない: %v", idx)
+		}
+		if _, ok := idx["comments(access_grant_id)→access_grants"]; ok {
+			t.Error("gem のモデルから偽のテーブル名を作った")
 		}
 	})
 
@@ -123,6 +127,95 @@ func TestScanRails(t *testing.T) {
 		}
 		if fk.AllNotNull {
 			t.Error("ブロックの optional: true が効いていない")
+		}
+	})
+
+	t.Run("名前空間: table_name_prefix と囲むモデルクラス(#44)", func(t *testing.T) {
+		for key, why := range map[string]string{
+			// module Fasp; def self.table_name_prefix; 'fasp_'; end の配下。
+			// 入れ子の class Subscription と、暗黙の belongs_to :provider(→ Fasp::Provider)
+			"fasp_subscriptions(fasp_provider_id)→fasp_providers": "接頭辞 + 入れ子のクラス + 名前空間内の相対解決",
+			// def self.table_name_prefix = 'web_'(1 行の def)+ まとめ書きの class Web::PushSubscription
+			"web_push_subscriptions(user_id)→users": "1 行の def の接頭辞",
+			// class User::Preference(囲みがモデルクラス)は「親テーブルの単数形_」
+			"user_preferences(user_id)→users": "モデルクラスの中の名前空間",
+		} {
+			if _, ok := idx[key]; !ok {
+				t.Errorf("%s が無い(%s): %v", key, why, idx)
+			}
+		}
+		// 親側の has_many :subscriptions, dependent: も名前空間の中で解決される
+		if fk := idx["fasp_subscriptions(fasp_provider_id)→fasp_providers"]; fk.DeleteRule != "CASCADE" {
+			t.Errorf("名前空間内の dependent: が CASCADE に写っていない: %+v", fk)
+		}
+		for _, tbl := range sc.Tables {
+			if tbl == "subscriptions" || tbl == "providers" || tbl == "push_subscriptions" || tbl == "preferences" {
+				t.Errorf("接頭辞の無いテーブル名 %s が残っている: %v", tbl, sc.Tables)
+			}
+		}
+	})
+
+	t.Run("自己参照を捨てない(#44)", func(t *testing.T) {
+		// DB スキャンは自己参照 FK を持つ。静的ソースで捨てると Edge Diff で
+		// 「DB にだけある関係」に見える
+		fk, ok := idx["taxonomy(parent_id)→taxonomy"]
+		if !ok {
+			t.Fatalf("belongs_to :parent, class_name: 'Category' が落ちた: %v", idx)
+		}
+		if fk.AllNotNull {
+			t.Error("optional: true が効いていない")
+		}
+	})
+
+	t.Run("相手が見つからない関連は FK にせず注記(#44)", func(t *testing.T) {
+		for key := range idx {
+			if strings.Contains(key, "reviewer") {
+				t.Errorf("見つからない相手への FK を作った: %s", key)
+			}
+		}
+		found := false
+		for _, n := range sc.Notes {
+			if strings.Contains(n, "[判定不能]") && strings.Contains(n, "Comment.reviewer → Moderation::Reviewer") {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("判定不能の注記が無い: %v", sc.Notes)
+		}
+	})
+
+	t.Run("has_many 側にしか無い関係も FK にする(NULL 許容は unknown)", func(t *testing.T) {
+		fk, ok := idx["webauthn_credentials(user_id)→users"]
+		if !ok {
+			t.Fatalf("User has_many :webauthn_credentials が FK になっていない: %v", idx)
+		}
+		if fk.Nullability() != NullableUnknown || fk.DeleteRule != "CASCADE" {
+			t.Errorf("親側の宣言だけでは NULL 許容は分からない / dependent: は CASCADE: %+v", fk)
+		}
+	})
+
+	t.Run("dependent: の CASCADE は has_many が使う列の FK にだけ付く", func(t *testing.T) {
+		// User has_many :posts, dependent: :destroy が消すのは user_id で紐づく投稿。
+		// 同じ 2 モデル間の別の belongs_to(edited_by_id)には付けない
+		if fk := idx["posts(user_id)→users"]; fk.DeleteRule != "CASCADE" {
+			t.Errorf("posts.user_id: %s", fk.DeleteRule)
+		}
+		if fk := idx["posts(edited_by_id)→users"]; fk.DeleteRule != "NO ACTION" {
+			t.Errorf("posts.edited_by_id に CASCADE が漏れた: %s", fk.DeleteRule)
+		}
+		// inverse_of: の相手の列を使う(provider_id という偽の列を作らない)
+		fk := idx["fasp_subscriptions(fasp_provider_id)→fasp_providers"]
+		if fk.DeleteRule != "CASCADE" || len(fk.Evidences) != 2 {
+			t.Errorf("inverse_of 経由の dependent: %+v", fk)
+		}
+		if _, ok := idx["fasp_subscriptions(provider_id)→fasp_providers"]; ok {
+			t.Error("inverse_of を無視して既定の列名で偽の FK を作った")
+		}
+	})
+
+	t.Run("入れ子クラスの後の宣言は外側のクラスのもの", func(t *testing.T) {
+		if _, ok := idx["status_edits(post_id)→posts"]; !ok {
+			t.Errorf("入れ子クラスの end の後の belongs_to が落ちた: %v", idx)
 		}
 	})
 
@@ -288,4 +381,88 @@ func TestYii1CascadeAndWith(t *testing.T) {
 	if !strong || !weak {
 		t.Errorf("post→comment の 強(カスケード)/弱(with) Suspect: strong=%v weak=%v", strong, weak)
 	}
+}
+
+// Yii1 の同種の解決漏れ(#44 の Yii1 版)。
+func TestScanYii1Resolution(t *testing.T) {
+	sc, err := ScanYii1("testdata/yii1modules")
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx := fkIndex(sc.FKs)
+
+	t.Run("tablePrefix を {{...}} にだけ前置する", func(t *testing.T) {
+		want := "tbl_post,tbl_post_tag,tbl_user,tbl_user_stat"
+		if got := strings.Join(sc.Tables, ","); got != want {
+			t.Errorf("tables = %s, want %s", got, want)
+		}
+		// 生 SQL の DELETE FROM {{user_stat}} も接頭辞付きの名前に解決される
+		found := false
+		for _, s := range sc.Suspects {
+			if s.FromTable == "tbl_post" && s.ToTable == "tbl_user_stat" && s.Strong {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("生 SQL の書き込み先が接頭辞付きで引けていない: %+v", sc.Suspects)
+		}
+	})
+
+	t.Run("modules/*/models のモデルも読む", func(t *testing.T) {
+		fk, ok := idx["tbl_post(author_id)→tbl_user"]
+		if !ok {
+			t.Fatalf("モジュール内の User への関係が無い: %v", idx)
+		}
+		// Post の BELONGS_TO と、モジュール内 User の HAS_MANY の 2 件
+		if len(fk.Evidences) != 2 || !strings.Contains(fk.Evidences[1].Origin, "modules/account/models/User.php") {
+			t.Errorf("証拠: %+v", fk.Evidences)
+		}
+		for _, tbl := range sc.Tables {
+			if tbl == "tbl_helper" {
+				t.Error("models ディレクトリの外(components)をモデルとして読んだ")
+			}
+		}
+		// 置き場所ごとの件数(#45: どこを読んだかが出力から分かること)
+		found := false
+		for _, n := range sc.Notes {
+			if strings.Contains(n, "読んだモデル 3 個") && strings.Contains(n, "protected/models 2") &&
+				strings.Contains(n, "protected/modules/account/models 1") {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("置き場所ごとの件数の注が無い: %v", sc.Notes)
+		}
+	})
+
+	t.Run("自己参照を捨てない", func(t *testing.T) {
+		fk, ok := idx["tbl_post(parent_id)→tbl_post"]
+		if !ok {
+			t.Fatalf("自己参照が落ちた: %v", idx)
+		}
+		if len(fk.Evidences) != 2 {
+			t.Errorf("BELONGS_TO と HAS_MANY の両側宣言は 1 本に 2 件: %+v", fk.Evidences)
+		}
+	})
+
+	t.Run("相手が見つからない関連は FK にせず注記", func(t *testing.T) {
+		for key := range idx {
+			if strings.Contains(key, "Tag") || strings.Contains(key, "AuditTrail") || strings.Contains(key, "tag_id") {
+				t.Errorf("見つからない相手への FK を作った: %s", key)
+			}
+		}
+		// MANY_MANY の自分側(中間テーブル → 自モデル)は宣言から確かなので残す
+		if _, ok := idx["tbl_post_tag(post_id)→tbl_post"]; !ok {
+			t.Errorf("MANY_MANY の自分側が落ちた: %v", idx)
+		}
+		found := false
+		for _, n := range sc.Notes {
+			if strings.Contains(n, "[判定不能]") && strings.Contains(n, "Post.tags → Tag") && strings.Contains(n, "Post.audit → AuditTrail") {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("判定不能の注記が無い: %v", sc.Notes)
+		}
+	})
 }

@@ -6,4 +6,5 @@ class Comment < ApplicationRecord
   belongs_to :access_grant,
              class_name: "Doorkeeper::AccessGrant",
              optional: true
+  belongs_to :reviewer, class_name: "Moderation::Reviewer", optional: true
 end

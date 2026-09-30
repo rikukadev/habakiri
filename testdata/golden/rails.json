@@ -1,28 +1,35 @@
 {
   "schema": "rails:railsapp",
-  "table_count": 7,
-  "fk_count": 7,
+  "table_count": 13,
+  "fk_count": 13,
   "isolated_tables": [
     "search_entries"
   ],
-  "shared_kernel": null,
+  "shared_kernel": [
+    {
+      "node": "users",
+      "degree": 6
+    }
+  ],
   "hub_threshold": 6,
   "cascade_groups": {
-    "index_entries": [
-      "index_entries",
-      "posts",
-      "users"
+    "fasp_providers": [
+      "fasp_providers",
+      "fasp_subscriptions"
     ]
   },
   "blocks": [
     [
-      "access_grants"
-    ],
-    [
       "comments"
     ],
     [
-      "index_entries"
+      "oauth_access_grants"
+    ],
+    [
+      "posts"
+    ],
+    [
+      "status_edits"
     ],
     [
       "taxonomy"
@@ -30,8 +37,8 @@
   ],
   "edges": [
     {
-      "a": "access_grants",
-      "b": "comments",
+      "a": "comments",
+      "b": "oauth_access_grants",
       "weight": 1,
       "max_weight": 1,
       "fk_count": 1,
@@ -44,7 +51,7 @@
           "child_columns": [
             "access_grant_id"
           ],
-          "parent_table": "access_grants",
+          "parent_table": "oauth_access_grants",
           "delete_rule": "NO ACTION",
           "all_not_null": false
         }
@@ -52,23 +59,13 @@
     },
     {
       "a": "comments",
-      "b": "index_entries",
-      "weight": 4,
+      "b": "posts",
+      "weight": 2,
       "max_weight": 2,
-      "fk_count": 2,
+      "fk_count": 1,
       "bridge": true,
       "cut_level": 2,
       "fks": [
-        {
-          "constraint": "ar:comment.author_id",
-          "child_table": "comments",
-          "child_columns": [
-            "author_id"
-          ],
-          "parent_table": "users",
-          "delete_rule": "NO ACTION",
-          "all_not_null": true
-        },
         {
           "constraint": "ar:comment.commentable_id(polymorphic)",
           "child_table": "comments",
@@ -82,7 +79,28 @@
       ]
     },
     {
-      "a": "index_entries",
+      "a": "posts",
+      "b": "status_edits",
+      "weight": 2,
+      "max_weight": 2,
+      "fk_count": 1,
+      "bridge": true,
+      "cut_level": 2,
+      "fks": [
+        {
+          "constraint": "ar:status_edit.post_id",
+          "child_table": "status_edits",
+          "child_columns": [
+            "post_id"
+          ],
+          "parent_table": "posts",
+          "delete_rule": "NO ACTION",
+          "all_not_null": true
+        }
+      ]
+    },
+    {
+      "a": "posts",
       "b": "taxonomy",
       "weight": 1,
       "max_weight": 1,
@@ -103,44 +121,185 @@
       ]
     }
   ],
-  "islands": null,
-  "hub_contracts": null,
+  "islands": [
+    {
+      "name": "fasp_providers",
+      "tables": 2
+    },
+    {
+      "name": "index_entries",
+      "tables": 1
+    },
+    {
+      "name": "user_preferences",
+      "tables": 1
+    },
+    {
+      "name": "web_push_subscriptions",
+      "tables": 1
+    },
+    {
+      "name": "webauthn_credentials",
+      "tables": 1
+    }
+  ],
+  "hub_contracts": [
+    {
+      "unit": "comments",
+      "unit_tables": 1,
+      "hub": "users",
+      "to_hub_fks": 1,
+      "from_hub_fks": 0,
+      "not_null_fks": 1,
+      "level": 2
+    },
+    {
+      "unit": "index_entries",
+      "unit_tables": 1,
+      "hub": "users",
+      "to_hub_fks": 1,
+      "from_hub_fks": 0,
+      "not_null_fks": 1,
+      "level": 2
+    },
+    {
+      "unit": "posts",
+      "unit_tables": 1,
+      "hub": "users",
+      "to_hub_fks": 2,
+      "from_hub_fks": 0,
+      "not_null_fks": 1,
+      "level": 2
+    },
+    {
+      "unit": "user_preferences",
+      "unit_tables": 1,
+      "hub": "users",
+      "to_hub_fks": 1,
+      "from_hub_fks": 0,
+      "not_null_fks": 1,
+      "level": 2
+    },
+    {
+      "unit": "web_push_subscriptions",
+      "unit_tables": 1,
+      "hub": "users",
+      "to_hub_fks": 1,
+      "from_hub_fks": 0,
+      "not_null_fks": 0,
+      "level": 1
+    },
+    {
+      "unit": "webauthn_credentials",
+      "unit_tables": 1,
+      "hub": "users",
+      "to_hub_fks": 1,
+      "from_hub_fks": 0,
+      "not_null_fks": 0,
+      "level": 1
+    }
+  ],
   "partition": {
     "groups": [
       {
-        "name": "index_entries",
-        "tables": 6,
+        "name": "fasp_providers",
+        "tables": 7,
         "units": [
-          "index_entries",
-          "access_grants",
+          "fasp_providers",
           "comments",
+          "oauth_access_grants",
+          "posts",
+          "status_edits",
           "taxonomy"
         ],
         "hubs": null,
         "glue": {
-          "FK": 3
+          "FK": 4
+        }
+      },
+      {
+        "name": "users 圏",
+        "tables": 4,
+        "units": [
+          "index_entries",
+          "user_preferences",
+          "web_push_subscriptions",
+          "webauthn_credentials"
+        ],
+        "hubs": [
+          "users"
+        ],
+        "glue": {
+          "hub契約": 4
         }
       }
     ],
-    "modularity": 0,
-    "max_modularity": 0,
+    "modularity": 0.25346260387811625,
+    "max_modularity": 0.25346260387811625,
     "levels": [
       {
         "k": 1,
         "modularity": 0,
         "groups": [
           {
-            "name": "index_entries",
-            "tables": 6,
+            "name": "users 圏",
+            "tables": 11,
             "units": [
-              "index_entries",
-              "access_grants",
+              "fasp_providers",
               "comments",
+              "index_entries",
+              "oauth_access_grants",
+              "posts",
+              "status_edits",
+              "taxonomy",
+              "user_preferences",
+              "web_push_subscriptions",
+              "webauthn_credentials"
+            ],
+            "hubs": [
+              "users"
+            ],
+            "glue": {
+              "FK": 4,
+              "hub契約": 6
+            }
+          }
+        ]
+      },
+      {
+        "k": 2,
+        "modularity": 0.25346260387811625,
+        "groups": [
+          {
+            "name": "fasp_providers",
+            "tables": 7,
+            "units": [
+              "fasp_providers",
+              "comments",
+              "oauth_access_grants",
+              "posts",
+              "status_edits",
               "taxonomy"
             ],
             "hubs": null,
             "glue": {
-              "FK": 3
+              "FK": 4
+            }
+          },
+          {
+            "name": "users 圏",
+            "tables": 4,
+            "units": [
+              "index_entries",
+              "user_preferences",
+              "web_push_subscriptions",
+              "webauthn_credentials"
+            ],
+            "hubs": [
+              "users"
+            ],
+            "glue": {
+              "hub契約": 4
             }
           }
         ]
@@ -149,8 +308,8 @@
   },
   "bridges": [
     {
-      "a": "access_grants",
-      "b": "comments",
+      "a": "comments",
+      "b": "oauth_access_grants",
       "weight": 1,
       "side_a_size": 1,
       "side_b_size": 1,
@@ -161,7 +320,7 @@
           "child_columns": [
             "access_grant_id"
           ],
-          "parent_table": "access_grants",
+          "parent_table": "oauth_access_grants",
           "delete_rule": "NO ACTION",
           "all_not_null": false
         }
@@ -171,10 +330,10 @@
       "pattern": "結果整合(outbox→イベント購読)or 読みレプリカ"
     },
     {
-      "a": "index_entries",
+      "a": "posts",
       "b": "taxonomy",
       "weight": 1,
-      "side_a_size": 3,
+      "side_a_size": 1,
       "side_b_size": 1,
       "fks": [
         {
@@ -194,26 +353,38 @@
     },
     {
       "a": "comments",
-      "b": "index_entries",
-      "weight": 4,
+      "b": "posts",
+      "weight": 2,
       "side_a_size": 1,
-      "side_b_size": 3,
+      "side_b_size": 1,
       "fks": [
-        {
-          "constraint": "ar:comment.author_id",
-          "child_table": "comments",
-          "child_columns": [
-            "author_id"
-          ],
-          "parent_table": "users",
-          "delete_rule": "NO ACTION",
-          "all_not_null": true
-        },
         {
           "constraint": "ar:comment.commentable_id(polymorphic)",
           "child_table": "comments",
           "child_columns": [
             "commentable_id"
+          ],
+          "parent_table": "posts",
+          "delete_rule": "NO ACTION",
+          "all_not_null": true
+        }
+      ],
+      "difficulty": "中(NOT NULL あり — 既定値かバックフィルの設計が要る)",
+      "cut_level": 2,
+      "pattern": "同期コマンド + pending + 冪等キー / 存在保証 API"
+    },
+    {
+      "a": "posts",
+      "b": "status_edits",
+      "weight": 2,
+      "side_a_size": 1,
+      "side_b_size": 1,
+      "fks": [
+        {
+          "constraint": "ar:status_edit.post_id",
+          "child_table": "status_edits",
+          "child_columns": [
+            "post_id"
           ],
           "parent_table": "posts",
           "delete_rule": "NO ACTION",
@@ -247,14 +418,20 @@
       "from_table": "users",
       "to_table": "search_entries",
       "strong": true
+    },
+    {
+      "from_table": "webauthn_credentials",
+      "to_table": "users",
+      "strong": false
     }
   ],
   "notes": [
+    "[判定不能] 相手のモデルが見つからない関連 1 件は FK にしていない(app/models に居ない gem のモデル等。推測でテーブル名を作ると偽の関係になる): Comment.reviewer → Moderation::Reviewer",
     "[強] Post: callback(concern 含む)+ 宣言外の SearchEntry への言及 — 書き込み結合の疑い",
     "[強] User: callback(concern 含む)+ 宣言外の SearchEntry への言及 — 書き込み結合の疑い",
     "[弱] AdminUser: メソッド/スコープから宣言外の User への言及",
     "[弱] Category: メソッド/スコープから宣言外の Post への言及",
-    "CASCADE 集約 [index_entries] が 3 テーブル(全体の 25%超)に達した — この規模は集約ではなく「hub への掃除 CASCADE」の融合を疑う。--hub を下げて hub を増やすと分解されることが多い",
+    "[弱] WebauthnCredential: メソッド/スコープから宣言外の User への言及",
     "FK が無いことは無関係の証明ではない — アプリ層 JOIN・ポリモーフィック関連は静的スキャンでは見えない。--cooc でクエリログの書き込み共起を持ち込める。",
     "CASCADE 集約は「切らない」判断を機械化したもの。切りたくなったらまず CASCADE を外す設計判断が先。"
   ]

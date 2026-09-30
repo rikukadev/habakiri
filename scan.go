@@ -57,6 +57,10 @@ type ScanResult struct {
 	Projected bool `json:"-"`
 	// ShowEvidence: --show-evidence。レポートに FK の出自を出す。
 	ShowEvidence bool `json:"-"`
+	// ModelTables: 静的ソースがモデル定義を読んだテーブル。関連の相手として
+	// 名前が出てきただけのテーブル(gem のモデル等)は含まない — 定義を読んで
+	// いないテーブルについて「宣言が無い」とは言えないため。nil なら Tables と同じ。
+	ModelTables []string `json:"-"`
 	// PhysicalTables / LogicalTables: 合流時に、各ソースが見たテーブル(DB 名に
 	// 写した後)。単独ソースでは空(Tables がそのまま唯一のソースの集合)。
 	PhysicalTables []string `json:"-"`
