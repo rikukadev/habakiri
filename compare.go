@@ -18,8 +18,11 @@ type GraphSummary struct {
 	FKCount     int                `json:"fk_count"`
 	Modularity  float64            `json:"modularity"`
 	Communities []CommunitySummary `json:"communities"`
-	// Isolated: この見方で辺を持たない非 hub テーブル。
+	// Isolated: この見方で辺を持たない非 hub テーブル(入力はそのテーブルを見ている)。
 	Isolated []string `json:"isolated"`
+	// Unobserved: この見方の入力がそもそも見ていないテーブル(DB に無いテーブルを
+	// physical で、など)。孤立と違い、辺が無いことを確かめていない。
+	Unobserved []string `json:"unobserved"`
 }
 
 // CommunitySummary はコミュニティ 1 つ(テーブル単位に展開済み)。
@@ -59,21 +62,37 @@ var comparePairs = [][2]GraphKind{
 func BuildComparison(ci *ComparisonInput) *Comparison {
 	c := &Comparison{Common: ci.Common, Graphs: map[string]GraphSummary{}}
 	views := map[GraphKind]CommunityView{}
+	// 見方ごとに「入力が見たテーブル」。Edge Diff と同じ判定(compare_edges.go)。
+	physSeen, logicSeen := observedScopes(ci.Combined)
+	seen := map[GraphKind]func(string) bool{
+		GraphPhysical: physSeen,
+		GraphLogical:  logicSeen,
+		GraphCombined: func(t string) bool { return physSeen(t) || logicSeen(t) },
+	}
 	for _, v := range ci.Views {
 		cv := CommunityViewOf(v.Kind.String(), v.Analysis)
+		cv.Unobserved = map[string]bool{}
+		for _, t := range cv.Tables {
+			if _, ok := cv.Assign[t]; !ok && !seen[v.Kind](t) {
+				cv.Unobserved[t] = true
+			}
+		}
 		views[v.Kind] = cv
 
 		byName := map[string][]string{}
-		var isolated []string
+		isolated, unobserved := []string{}, []string{}
 		for _, t := range cv.Tables {
-			if name, ok := cv.Assign[t]; ok {
+			switch name, ok := cv.Assign[t]; {
+			case ok:
 				byName[name] = append(byName[name], t)
-			} else {
+			case cv.Unobserved[t]:
+				unobserved = append(unobserved, t)
+			default:
 				isolated = append(isolated, t)
 			}
 		}
 		gs := GraphSummary{FKCount: len(v.Scan.FKs), Modularity: cv.Modularity,
-			Communities: []CommunitySummary{}, Isolated: isolated}
+			Communities: []CommunitySummary{}, Isolated: isolated, Unobserved: unobserved}
 		for name, ts := range byName {
 			gs.Communities = append(gs.Communities, CommunitySummary{Name: name, Tables: ts})
 		}
@@ -84,9 +103,6 @@ func BuildComparison(ci *ComparisonInput) *Comparison {
 			}
 			return x.Name < y.Name
 		})
-		if gs.Isolated == nil {
-			gs.Isolated = []string{}
-		}
 		c.Graphs[v.Kind.String()] = gs
 	}
 	var hubNames []string
@@ -131,13 +147,16 @@ func WriteComparisonText(w io.Writer, c *Comparison) {
 	p("■ 見方ごとの分割")
 	for _, kind := range []GraphKind{GraphPhysical, GraphLogical, GraphCombined} {
 		g := c.Graphs[kind.String()]
-		p("  %-8s FK %d 本 / コミュニティ %d / 孤立 %d / Q=%.2f",
-			kind, g.FKCount, len(g.Communities), len(g.Isolated), g.Modularity)
+		p("  %-8s FK %d 本 / コミュニティ %d / 孤立 %d / 未観測 %d / Q=%.2f",
+			kind, g.FKCount, len(g.Communities), len(g.Isolated), len(g.Unobserved), g.Modularity)
 		for _, cm := range g.Communities {
 			p("      %s(%d): %s", cm.Name, len(cm.Tables), strings.Join(cm.Tables, ", "))
 		}
 		if len(g.Isolated) > 0 {
 			p("      孤立(%d): %s", len(g.Isolated), strings.Join(g.Isolated, ", "))
+		}
+		if len(g.Unobserved) > 0 {
+			p("      未観測(%d — この見方の入力がテーブル自体を見ていない): %s", len(g.Unobserved), strings.Join(g.Unobserved, ", "))
 		}
 	}
 	p("")
@@ -159,6 +178,10 @@ func WriteComparisonText(w io.Writer, c *Comparison) {
 				p("      %s: (%s では孤立) → %s", m.Table, d.A.Kind, m.To)
 			case MoveIsolatedInB:
 				p("      %s: %s → (%s では孤立)", m.Table, m.From, d.B.Kind)
+			case MoveUnobservedInA:
+				p("      %s: (%s では未観測) → %s", m.Table, d.A.Kind, m.To)
+			case MoveUnobservedInB:
+				p("      %s: %s → (%s では未観測)", m.Table, m.From, d.B.Kind)
 			}
 		}
 		if len(d.CutEdges) > 0 {
@@ -362,6 +385,9 @@ func WriteComparisonHTML(w io.Writer, c *Comparison) {
 		if len(g.Isolated) > 0 {
 			iso = fmt.Sprintf("%d: <code>%s</code>", len(g.Isolated), esc(strings.Join(g.Isolated, ", ")))
 		}
+		if len(g.Unobserved) > 0 {
+			iso += fmt.Sprintf("<br>未観測 %d: <code>%s</code>", len(g.Unobserved), esc(strings.Join(g.Unobserved, ", ")))
+		}
 		p(`<tr><td>%s</td><td>%d</td><td>%.2f</td><td>%s</td><td>%s</td></tr>`,
 			kind, g.FKCount, g.Modularity, strings.Join(comms, "<br>"), iso)
 	}
@@ -393,7 +419,7 @@ Observed Only は生 SQL / 動的クエリの調査対象。</p>`)
 	edgeTable("hub に接する関係", c.EdgeDiff.HubEdges, c.EdgeDiff.HubCounts)
 
 	p(`<h2>Community Diff — 分割はどれだけ一致するか</h2>
-<p class="sub">ARI: 1 = 同じ分割 / 0 = 偶然と同程度。「孤立」は移動ではなく、その見方の入力に関係が現れなかったことを指す。</p>
+<p class="sub">ARI: 1 = 同じ分割 / 0 = 偶然と同程度。「孤立」はその見方の入力がテーブルを見たうえで関係が現れなかったこと、「未観測」は入力がテーブル自体を見ていないこと。どちらも移動ではない。</p>
 <div class="tw"><table><tr><th>対</th><th>ARI</th><th>非孤立のみ</th><th>所属が変わったテーブル</th><th>片方でだけ跨ぐ辺</th></tr>`)
 	for _, d := range c.CommunityDiff.Pairs {
 		var moved, cuts []string
@@ -404,6 +430,12 @@ Observed Only は生 SQL / 動的クエリの調査対象。</p>`)
 			}
 			if m.Kind == MoveIsolatedInB {
 				to = "(" + d.B.Kind + " では孤立)"
+			}
+			if m.Kind == MoveUnobservedInA {
+				from = "(" + d.A.Kind + " では未観測)"
+			}
+			if m.Kind == MoveUnobservedInB {
+				to = "(" + d.B.Kind + " では未観測)"
 			}
 			moved = append(moved, fmt.Sprintf("<code>%s</code>: %s → %s", esc(m.Table), from, to))
 		}

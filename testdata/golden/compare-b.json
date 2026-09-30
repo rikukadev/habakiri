@@ -855,7 +855,8 @@
             ]
           }
         ],
-        "isolated": []
+        "isolated": [],
+        "unobserved": []
       },
       "logical": {
         "fk_count": 18,
@@ -889,7 +890,8 @@
             ]
           }
         ],
-        "isolated": [
+        "isolated": [],
+        "unobserved": [
           "audit_log"
         ]
       },
@@ -922,7 +924,8 @@
           "category",
           "comment",
           "tag"
-        ]
+        ],
+        "unobserved": []
       }
     },
     "edge_diff": {
@@ -1277,13 +1280,15 @@
             "kind": "physical",
             "communities": 2,
             "modularity": 0.2932041500665365,
-            "isolated": 6
+            "isolated": 6,
+            "unobserved": 0
           },
           "b": {
             "kind": "logical",
             "communities": 3,
             "modularity": 0.4262267701878279,
-            "isolated": 1
+            "isolated": 0,
+            "unobserved": 1
           },
           "vertices": 13,
           "excluded": 0,
@@ -1325,7 +1330,7 @@
               "table": "audit_log",
               "from": "account 圏",
               "to": "",
-              "kind": "isolated_in_b"
+              "kind": "unobserved_in_b"
             },
             {
               "table": "category",
@@ -1361,13 +1366,15 @@
             "kind": "physical",
             "communities": 2,
             "modularity": 0.2932041500665365,
-            "isolated": 6
+            "isolated": 6,
+            "unobserved": 0
           },
           "b": {
             "kind": "combined",
             "communities": 3,
             "modularity": 0.43854299178069617,
-            "isolated": 0
+            "isolated": 0,
+            "unobserved": 0
           },
           "vertices": 13,
           "excluded": 0,
@@ -1438,13 +1445,15 @@
             "kind": "logical",
             "communities": 3,
             "modularity": 0.4262267701878279,
-            "isolated": 1
+            "isolated": 0,
+            "unobserved": 1
           },
           "b": {
             "kind": "combined",
             "communities": 3,
             "modularity": 0.43854299178069617,
-            "isolated": 0
+            "isolated": 0,
+            "unobserved": 0
           },
           "vertices": 13,
           "excluded": 0,
@@ -1473,7 +1482,7 @@
               "table": "audit_log",
               "from": "",
               "to": "account 圏",
-              "kind": "isolated_in_a"
+              "kind": "unobserved_in_a"
             }
           ],
           "cut_edges": [

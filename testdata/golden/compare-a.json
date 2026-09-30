@@ -861,7 +861,8 @@
         ],
         "isolated": [
           "audit_log"
-        ]
+        ],
+        "unobserved": []
       },
       "logical": {
         "fk_count": 18,
@@ -895,7 +896,8 @@
             ]
           }
         ],
-        "isolated": [
+        "isolated": [],
+        "unobserved": [
           "audit_log"
         ]
       },
@@ -923,7 +925,8 @@
           "product",
           "shipment",
           "tag"
-        ]
+        ],
+        "unobserved": []
       }
     },
     "edge_diff": {
@@ -1249,13 +1252,15 @@
             "kind": "physical",
             "communities": 1,
             "modularity": 0,
-            "isolated": 12
+            "isolated": 12,
+            "unobserved": 0
           },
           "b": {
             "kind": "logical",
             "communities": 3,
             "modularity": 0.4171610423006,
-            "isolated": 1
+            "isolated": 0,
+            "unobserved": 1
           },
           "vertices": 13,
           "excluded": 0,
@@ -1345,13 +1350,15 @@
             "kind": "physical",
             "communities": 1,
             "modularity": 0,
-            "isolated": 12
+            "isolated": 12,
+            "unobserved": 0
           },
           "b": {
             "kind": "combined",
             "communities": 3,
             "modularity": 0.4171610423006,
-            "isolated": 1
+            "isolated": 1,
+            "unobserved": 0
           },
           "vertices": 13,
           "excluded": 0,
@@ -1441,13 +1448,15 @@
             "kind": "logical",
             "communities": 3,
             "modularity": 0.4171610423006,
-            "isolated": 1
+            "isolated": 0,
+            "unobserved": 1
           },
           "b": {
             "kind": "combined",
             "communities": 3,
             "modularity": 0.4171610423006,
-            "isolated": 1
+            "isolated": 1,
+            "unobserved": 0
           },
           "vertices": 13,
           "excluded": 0,

@@ -18,15 +18,15 @@
       purchase 圏: 3 テーブル中 DB にあるもの 3、うち物理 FK あり 0(0%)  ⚠ 入力が薄い: 物理 FK が全体より大幅に少ない — 結合が弱いのではなく、FK の整備状況を写している可能性
 
 ■ 見方ごとの分割
-  physical FK 1 本 / コミュニティ 1 / 孤立 12 / Q=0.00
+  physical FK 1 本 / コミュニティ 1 / 孤立 12 / 未観測 0 / Q=0.00
       purchase 圏(1): purchase_item
       孤立(12): article, article_tag, attachment, audit_log, category, comment, customer, invoice, payment, product, shipment, tag
-  logical  FK 18 本 / コミュニティ 3 / 孤立 1 / Q=0.42
+  logical  FK 18 本 / コミュニティ 3 / 孤立 0 / 未観測 1 / Q=0.42
       account 圏(6): article, article_tag, attachment, category, comment, tag
       payment(3): payment, product, purchase_item
       purchase 圏(3): customer, invoice, shipment
-      孤立(1): audit_log
-  combined FK 18 本 / コミュニティ 3 / 孤立 1 / Q=0.42
+      未観測(1 — この見方の入力がテーブル自体を見ていない): audit_log
+  combined FK 18 本 / コミュニティ 3 / 孤立 1 / 未観測 0 / Q=0.42
       account 圏(6): article, article_tag, attachment, category, comment, tag
       payment(3): payment, product, purchase_item
       purchase 圏(3): customer, invoice, shipment
