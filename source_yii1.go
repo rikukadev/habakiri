@@ -317,6 +317,7 @@ func yiiToScan(dir string, models map[string]*yiiModel, prefix string, dynamic m
 	reCbDelete := regexp.MustCompile(`function\s+(beforeDelete|afterDelete)\s*\([^)]*\)\s*\{`)
 	reDelModel := regexp.MustCompile(`(\w+)::model\(\)->delete(?:All|AllByAttributes|ByPk)?\(`)
 	reDelRel := regexp.MustCompile(`\$this->(\w+)->delete\(`)
+	cascaded := map[string]map[string]bool{} // モデル → 手書きカスケードで出した相手
 	for _, cc := range classes {
 		m := models[cc]
 		for _, loc := range reCbDelete.FindAllStringSubmatchIndex(m.fileSrc, -1) {
@@ -338,8 +339,12 @@ func yiiToScan(dir string, models map[string]*yiiModel, prefix string, dynamic m
 				continue
 			}
 			var names []string
+			if cascaded[cc] == nil {
+				cascaded[cc] = map[string]bool{}
+			}
 			for t := range targets {
 				names = append(names, t)
+				cascaded[cc][t] = true
 				if tt, ok := tableOf(t); ok {
 					res.Suspects = append(res.Suspects, Suspect{
 						FromTable: m.tableName, ToTable: tt, Strong: true})
@@ -349,6 +354,31 @@ func yiiToScan(dir string, models map[string]*yiiModel, prefix string, dynamic m
 			res.Notes = append(res.Notes, fmt.Sprintf(
 				"[強] %s: beforeDelete/afterDelete 内で %s を削除 — 手書きカスケード(実質ライフサイクル共有。切らない候補)",
 				cc, strings.Join(names, ", ")))
+		}
+	}
+
+	// モデル経由の一括書き込み(X::model()->updateAll 等)。callback の外でも
+	// 宣言に現れない書き込み結合なので [強]。手書きカスケードで出した相手は重ねない。
+	reModelWrite := regexp.MustCompile(`(\w+)::model\(\)->(?:updateAll|updateByPk|updateCounters|deleteAll|deleteByPk|deleteAllByAttributes)\(`)
+	for _, cc := range classes {
+		m := models[cc]
+		targets := map[string]bool{}
+		for _, w := range reModelWrite.FindAllStringSubmatch(maskPHPComments(m.fileSrc), -1) {
+			if w[1] != cc && !cascaded[cc][w[1]] {
+				targets[w[1]] = true
+			}
+		}
+		var hits []string
+		for t := range targets {
+			if tt, ok := tableOf(t); ok {
+				hits = append(hits, t)
+				res.Suspects = append(res.Suspects, Suspect{FromTable: m.tableName, ToTable: tt, Strong: true})
+			}
+		}
+		if len(hits) > 0 {
+			sort.Strings(hits)
+			res.Notes = append(res.Notes, fmt.Sprintf(
+				"[強] %s: %s を ::model()->updateAll 等で一括書き込み — 宣言に現れない書き込み結合", cc, strings.Join(hits, ", ")))
 		}
 	}
 
@@ -449,6 +479,26 @@ func yiiToScan(dir string, models map[string]*yiiModel, prefix string, dynamic m
 			res.Notes = append(res.Notes,
 				fmt.Sprintf("[強] %s: 生SQL/コマンドビルダで %s へ書き込み — 宣言に現れない実結合",
 					cc, strings.Join(hits, ", ")))
+		}
+		// 読み取り(FROM / JOIN)は [弱]。書き込み先として出したテーブルは重ねない
+		written := map[string]bool{}
+		for _, h := range hits {
+			written[h] = true
+		}
+		var reads []string
+		for _, t := range extractRawReadTables(m.fileSrc) {
+			if !tableSet[t] && prefix != "" && tableSet[prefix+t] {
+				t = prefix + t
+			}
+			if t == m.tableName || !tableSet[t] || written[t] {
+				continue
+			}
+			reads = append(reads, t)
+			res.Suspects = append(res.Suspects, Suspect{FromTable: m.tableName, ToTable: t, Strong: false})
+		}
+		if len(reads) > 0 {
+			res.Notes = append(res.Notes,
+				fmt.Sprintf("[弱] %s: 生SQL/コマンドビルダで %s を読む(read 側の暗黙結合)", cc, strings.Join(reads, ", ")))
 		}
 	}
 

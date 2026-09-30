@@ -16,6 +16,15 @@ class Post extends CActiveRecord
         );
     }
 
+    public function archive()
+    {
+        // callback の外での一括書き込み(宣言済みの相手でも書き込み結合)
+        User::model()->updateAll(array('post_count' => 0), 'id = :id', array(':id' => $this->author_id));
+        // 生 SQL の読み取り
+        return Yii::app()->db->createCommand('SELECT t.* FROM {{post_tag}} t WHERE t.post_id = :id')->queryAll();
+        // コメントの中は読まない: SELECT * FROM {{user}}
+    }
+
     protected function afterDelete()
     {
         Yii::app()->db->createCommand('DELETE FROM {{user_stat}} WHERE post_id = :id')->execute();
