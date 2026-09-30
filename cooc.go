@@ -25,6 +25,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"math"
 	"os"
 	"regexp"
 	"sort"
@@ -36,6 +37,14 @@ type CoocPair struct {
 	A     string `json:"a"`
 	B     string `json:"b"`
 	Count int    `json:"count"`
+}
+
+// CoocData は共起の集計一式。TableTx / TotalTx は NPMI 正規化に使う
+// (生カウントはトラフィック分布の写しであって結合の写しではない)。
+type CoocData struct {
+	Pairs   []CoocPair     `json:"pairs"`
+	TableTx map[string]int `json:"table_tx"` // テーブルごとの出現 tx 数
+	TotalTx int            `json:"total_tx"`
 }
 
 var (
@@ -50,8 +59,8 @@ var (
 	reRollback   = regexp.MustCompile(`(?i)^\s*ROLLBACK\b`)
 )
 
-// LoadCooc はファイルを読んで共起ペアを集計する。
-func LoadCooc(path string) ([]CoocPair, error) {
+// LoadCooc はファイルを読んで共起を集計する。
+func LoadCooc(path string) (*CoocData, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("cooc: %w", err)
@@ -59,9 +68,15 @@ func LoadCooc(path string) ([]CoocPair, error) {
 	defer func() { _ = f.Close() }()
 
 	counts := map[[2]string]int{}
+	tableTx := map[string]int{}
+	totalTx := 0
 	addTx := func(tables map[string]bool) {
 		if len(tables) < 2 {
 			return
+		}
+		totalTx++
+		for t := range tables {
+			tableTx[t]++
 		}
 		list := make([]string, 0, len(tables))
 		for t := range tables {
@@ -157,5 +172,21 @@ func LoadCooc(path string) ([]CoocPair, error) {
 		}
 		return out[i].B < out[j].B
 	})
-	return out, nil
+	return &CoocData{Pairs: out, TableTx: tableTx, TotalTx: totalTx}, nil
+}
+
+// NPMI は正規化相互情報量([-1,1]、1 = 完全共起)。
+// 高頻度テーブルの偶発共起(生カウントは大きいが結合ではない)を抑える。
+func (d *CoocData) NPMI(a, b string, pairCount int) float64 {
+	if d.TotalTx == 0 || pairCount == 0 {
+		return 0
+	}
+	n := float64(d.TotalTx)
+	pab := float64(pairCount) / n
+	pa := float64(d.TableTx[a]) / n
+	pb := float64(d.TableTx[b]) / n
+	if pa == 0 || pb == 0 || pab >= 1 {
+		return 1
+	}
+	return math.Log(pab/(pa*pb)) / -math.Log(pab)
 }

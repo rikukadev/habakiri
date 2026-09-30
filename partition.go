@@ -22,11 +22,19 @@ import (
 
 // ServiceGroup は分割案のコミュニティ 1 つ。
 type ServiceGroup struct {
-	Name   string   `json:"name"`   // 最大ユニットの名前
+	Name   string   `json:"name"`   // 最大ユニットの名前(hub 所有時は「<hub> 圏」)
 	Tables int      `json:"tables"` // 実テーブル数合計(hub を除く)
 	Units  []string `json:"units"`  // 所属ユニット(代表名)
 	Hubs   []string `json:"hubs"`   // このコミュニティに落ちた hub(= 所有者)
+	// Glue: このグループを内側で束ねている辺の本数の内訳。
+	// 共起だけで束ねられたグループ(CoocOnly)は人間レビューの旗。
+	Glue     map[string]int `json:"glue,omitempty"`
+	CoocOnly bool           `json:"cooc_only,omitempty"`
 }
+
+// coocNPMIThreshold: 分割グラフに参加させる共起の NPMI 下限。
+// 生カウントではなく正規化指標で足切りする(高頻度テーブルの偶発共起を落とす)。
+const coocNPMIThreshold = 0.3
 
 // Partition は分割案全体。Groups は選択中の段(既定 = Q 最大)。
 // Levels は粒度の階段 — Girvan–Newman のデンドログラムを吸着後処理まで
@@ -34,7 +42,10 @@ type ServiceGroup struct {
 type Partition struct {
 	Groups     []ServiceGroup   `json:"groups"`
 	Modularity float64          `json:"modularity"`
-	Levels     []PartitionLevel `json:"levels"`
+	// MaxModularity: 階段全体での Q 最大。--services N で粗い段を選んだとき、
+	// 差分(Max - 現在)が「組織が課した境界の制約コスト」の定量になる。
+	MaxModularity float64          `json:"max_modularity"`
+	Levels        []PartitionLevel `json:"levels"`
 }
 
 // PartitionLevel は粒度 1 段(グループ数 K とその内容)。
@@ -273,6 +284,22 @@ func BuildPartition(a *Analysis) *Partition {
 		g.idx[n] = i
 	}
 
+	edgeType := map[[2]int]map[string]bool{}
+	mark := func(x, y string, kind string) {
+		i, j := g.idx[x], g.idx[y]
+		if i == j {
+			return
+		}
+		if i > j {
+			i, j = j, i
+		}
+		k := [2]int{i, j}
+		if edgeType[k] == nil {
+			edgeType[k] = map[string]bool{}
+		}
+		edgeType[k][kind] = true
+	}
+
 	// 辺: 橋
 	for _, e := range a.Edges {
 		if !e.Bridge {
@@ -281,6 +308,7 @@ func BuildPartition(a *Analysis) *Partition {
 		ua, ub := unitName[e.A], unitName[e.B]
 		if ua != "" && ub != "" && ua != ub {
 			g.addEdge(ua, ub, e.Weight)
+			mark(ua, ub, "FK")
 		}
 	}
 	// 辺: 疑い[強]
@@ -301,23 +329,22 @@ func BuildPartition(a *Analysis) *Partition {
 		}
 		seenS[[2]string{ua, ub}] = true
 		g.addEdge(ua, ub, 1)
+		mark(ua, ub, "疑い")
 	}
-	// 辺: 実測共起(FK なしの対のみ。重み = 2 × count/max — NOT NULL 級を上限に)
-	maxCooc := 0
-	for _, c := range a.Cooc {
-		if !c.HasFK && c.Count > maxCooc {
-			maxCooc = c.Count
+	// 辺: 実測共起(FK なし・共起 hub 非接続・NPMI ≥ 閾値のみ。
+	// 重み = 2 × NPMI — NOT NULL 級を上限に、正規化指標で強さを測る)
+	if !a.coocNoWeight {
+		for _, c := range a.Cooc {
+			if c.HasFK || c.Suppressed || c.NPMI < coocNPMIThreshold {
+				continue
+			}
+			ua, ub := resolveUnit(c.A), resolveUnit(c.B)
+			if ua == "" || ub == "" || ua == ub {
+				continue
+			}
+			g.addEdge(ua, ub, 2*c.NPMI)
+			mark(ua, ub, "共起")
 		}
-	}
-	for _, c := range a.Cooc {
-		if c.HasFK || maxCooc == 0 {
-			continue
-		}
-		ua, ub := resolveUnit(c.A), resolveUnit(c.B)
-		if ua == "" || ub == "" || ua == ub {
-			continue
-		}
-		g.addEdge(ua, ub, 2*float64(c.Count)/float64(maxCooc))
 	}
 
 	// 辺: hub 契約(二部射影の重み: 3 × FK本数 / hub次数)
@@ -327,6 +354,7 @@ func BuildPartition(a *Analysis) *Partition {
 		}
 		w := 3 * float64(hc.ToHub+hc.FromHub) / float64(hubDeg[hc.Hub])
 		g.addEdge(hc.Unit, hc.Hub, w)
+		mark(hc.Unit, hc.Hub, "hub契約")
 	}
 
 	orig := map[[2]int]float64{}
@@ -445,6 +473,60 @@ func BuildPartition(a *Analysis) *Partition {
 	if len(pt.Levels) > 0 {
 		pt.Groups = pt.Levels[best].Groups
 		pt.Modularity = pt.Levels[best].Modularity
+		pt.MaxModularity = pt.Levels[best].Modularity
+		for _, lv := range pt.Levels {
+			if lv.Modularity > pt.MaxModularity {
+				pt.MaxModularity = lv.Modularity
+			}
+		}
+	}
+
+	// 選択中グループの結束内訳(FK / 疑い / 共起 / hub契約)。
+	// 共起だけで束ねられたグループは人間レビューの旗(CoocOnly)。
+	fillGlue := func(groups []ServiceGroup) {
+		gi := map[string]int{}
+		for i, gr := range groups {
+			for _, u := range gr.Units {
+				gi[u] = i
+			}
+			for _, h := range gr.Hubs {
+				gi[h] = i
+			}
+		}
+		glue := make([]map[string]int, len(groups))
+		for k, kinds := range edgeType {
+			a, b := nodes[k[0]], nodes[k[1]]
+			ga, okA := gi[a]
+			gb, okB := gi[b]
+			if !okA || !okB || ga != gb {
+				continue
+			}
+			if glue[ga] == nil {
+				glue[ga] = map[string]int{}
+			}
+			for kind := range kinds {
+				glue[ga][kind]++
+			}
+		}
+		for i := range groups {
+			if glue[i] == nil {
+				continue
+			}
+			groups[i].Glue = glue[i]
+			if len(groups[i].Units) >= 2 && len(glue[i]) > 0 {
+				only := true
+				for kind := range glue[i] {
+					if kind != "共起" {
+						only = false
+					}
+				}
+				groups[i].CoocOnly = only
+			}
+		}
+	}
+	fillGlue(pt.Groups)
+	for i := range pt.Levels {
+		fillGlue(pt.Levels[i].Groups)
 	}
 	return pt
 }
