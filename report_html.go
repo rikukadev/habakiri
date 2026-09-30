@@ -120,6 +120,22 @@ code { font-family:ui-monospace,Menlo,monospace; font-size:.85em; }
 		}
 	}
 
+	if len(a.Cooc) > 0 {
+		p(`<h2>実測共起(--cooc)</h2>
+<p class="sub">同一トランザクションで一緒に書かれたテーブル対。FK なしの対は宣言に現れない結合の実測。</p>
+<div class="tw"><table><tr><th>対</th><th>回数</th><th>状態</th></tr>`)
+		for _, c := range a.Cooc {
+			mark := "FKなし — 宣言に現れない結合"
+			if c.Bridge {
+				mark = "橋 — 同一 tx の原子性に依存(レベル +1)"
+			} else if c.HasFK {
+				mark = "FKあり"
+			}
+			p(`<tr><td><code>%s × %s</code></td><td>%d</td><td>%s</td></tr>`, esc(c.A), esc(c.B), c.Count, esc(mark))
+		}
+		p(`</table></div>`)
+	}
+
 	if len(a.HubContracts) > 0 {
 		p(`<h2>hub 契約 — ユニットが shared kernel に払っている値段</h2>
 <p class="sub">橋の無い大物同士の分離コストはここに出る。L1 = 結果整合で済む / L2 = 存在保証が要る。</p>

@@ -32,6 +32,9 @@ type Analysis struct {
 	// HubContracts: ユニット(ブロック/島)が shared kernel(hub)に払っている
 	// 契約。橋が無い大物同士(例: Mastodon の交流と認証)の分離コストはここに出る。
 	HubContracts []HubContract `json:"hub_contracts"`
+	// Cooc: 縮約ノード対に写した書き込み共起(実測の結合)。HasFK=false の対が
+	// 「FKなし・共起あり」= 宣言に現れない不変条件の候補。
+	Cooc []CoocReport `json:"cooc,omitempty"`
 	// Partition: Girvan–Newman + モジュラリティ最大化による「大物数個」への分割案。
 	Partition *Partition `json:"partition,omitempty"`
 	Bridges       []BridgeReport      `json:"bridges"`          // 切断点
@@ -87,6 +90,15 @@ type HubContract struct {
 	FromHub    int    `json:"from_hub_fks"` // hub → unit 方向(hub 側が子)
 	NotNull    int    `json:"not_null_fks"`
 	Level      int    `json:"level"`
+}
+
+// CoocReport は縮約ノード対の書き込み共起。
+type CoocReport struct {
+	A      string `json:"a"`
+	B      string `json:"b"`
+	Count  int    `json:"count"`
+	HasFK  bool   `json:"has_fk"`
+	Bridge bool   `json:"bridge"`
 }
 
 // SeamReport は橋ではないが最も細い継ぎ目。
@@ -199,6 +211,18 @@ func Analyze(sc *ScanResult, hubThreshold int) *Analysis {
 		}
 		strongSuspect[Pair{A: x, B: y}] = true
 	}
+	// 書き込み共起を縮約ノード対に写す(hub・孤立に落ちた対は除く)
+	coocNode := map[Pair]int{}
+	for _, c := range sc.Cooc {
+		x, y := nodeRep(c.A), nodeRep(c.B)
+		if x == y {
+			continue
+		}
+		if x > y {
+			x, y = y, x
+		}
+		coocNode[Pair{A: x, B: y}] += c.Count
+	}
 	cutLevel := func(p Pair, e *Edge) int {
 		lv := 1
 		for _, fk := range e.FKs {
@@ -207,7 +231,9 @@ func Analyze(sc *ScanResult, hubThreshold int) *Analysis {
 				break
 			}
 		}
-		if strongSuspect[p] && lv < 3 {
+		// 疑い[強]または実測共起が同じ対に張る橋は、同一 tx の原子性に
+		// 依存している可能性が高い = 1 レベル加算
+		if (strongSuspect[p] || coocNode[p] > 0) && lv < 3 {
 			lv++
 		}
 		return lv
@@ -401,6 +427,40 @@ func Analyze(sc *ScanResult, hubThreshold int) *Analysis {
 		return x.Hub < y.Hub
 	})
 
+	// 共起レポート(FK の有無・橋かどうかの印付き)
+	if len(coocNode) > 0 {
+		edgePair := map[Pair]bool{}
+		for p := range edges {
+			edgePair[p] = true
+		}
+		var coocKeys []Pair
+		for p := range coocNode {
+			coocKeys = append(coocKeys, p)
+		}
+		sort.Slice(coocKeys, func(i, j int) bool {
+			if coocKeys[i].A != coocKeys[j].A {
+				return coocKeys[i].A < coocKeys[j].A
+			}
+			return coocKeys[i].B < coocKeys[j].B
+		})
+		for _, p := range coocKeys {
+			a.Cooc = append(a.Cooc, CoocReport{
+				A: p.A, B: p.B, Count: coocNode[p],
+				HasFK: edgePair[p], Bridge: bridgeSet[p]})
+		}
+		var quiet []string
+		for _, bp := range bridges {
+			if coocNode[bp] == 0 {
+				quiet = append(quiet, bp.A+"×"+bp.B)
+			}
+		}
+		if len(quiet) > 0 {
+			a.Notes = append(a.Notes, fmt.Sprintf(
+				"観測範囲で共起の無い橋: %s — もう守っていない制約の可能性(ただし観測期間に注意。無いことの証明には使わない)",
+				strings.Join(quiet, ", ")))
+		}
+	}
+
 	for _, e := range ThinnestSeams(edges, bridges, 5) {
 		a.ThinSeams = append(a.ThinSeams, SeamReport{
 			A: e.A, B: e.B, Weight: e.Weight, FKs: len(e.FKs)})
@@ -408,8 +468,11 @@ func Analyze(sc *ScanResult, hubThreshold int) *Analysis {
 
 	a.Partition = BuildPartition(a)
 
+	if len(sc.Cooc) == 0 {
+		a.Notes = append(a.Notes,
+			"FK が無いことは無関係の証明ではない — アプリ層 JOIN・ポリモーフィック関連は静的スキャンでは見えない。--cooc でクエリログの書き込み共起を持ち込める。")
+	}
 	a.Notes = append(a.Notes,
-		"FK が無いことは無関係の証明ではない — アプリ層 JOIN・ポリモーフィック関連は静的スキャンでは見えない。クエリログ由来の共起で補うのは今後の拡張。",
 		"CASCADE 集約は「切らない」判断を機械化したもの。切りたくなったらまず CASCADE を外す設計判断が先。",
 	)
 	return a
@@ -499,6 +562,20 @@ func WriteText(w io.Writer, a *Analysis) {
 			} else {
 				p("  %s", is.Name)
 			}
+		}
+		p("")
+	}
+
+	if len(a.Cooc) > 0 {
+		p("■ 実測共起(--cooc)— 同一トランザクションで一緒に書かれたテーブル対")
+		for _, c := range a.Cooc {
+			mark := "FKなし ← 宣言に現れない結合"
+			if c.Bridge {
+				mark = "橋 ← 同一 tx の原子性に依存(レベル +1 済み)"
+			} else if c.HasFK {
+				mark = "FKあり"
+			}
+			p("  %s × %s ×%d  %s", c.A, c.B, c.Count, mark)
 		}
 		p("")
 	}

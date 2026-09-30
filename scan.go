@@ -34,6 +34,8 @@ type ScanResult struct {
 	// Suspects: 宣言外の結合の疑い(静的ソースの callback / メソッド言及)。
 	// FK ではないので重み付けもグラフ演算もしないが、図には別線種で出す。
 	Suspects []Suspect `json:"suspects,omitempty"`
+	// Cooc: 同一トランザクション書き込み共起(--cooc で持ち込み)。
+	Cooc []CoocPair `json:"cooc,omitempty"`
 }
 
 // Suspect は「FK ではないが結合している疑い」の 1 本(テーブル名ベース)。
