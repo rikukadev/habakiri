@@ -37,6 +37,7 @@ type CommunityComparison struct {
 type Comparison struct {
 	Common        CommonConditions        `json:"common"`
 	Graphs        map[string]GraphSummary `json:"graphs"`
+	EdgeDiff      EdgeDiff                `json:"edge_diff"`
 	CommunityDiff CommunityComparison     `json:"community_diff"`
 }
 
@@ -81,6 +82,11 @@ func BuildComparison(ci *ComparisonInput) *Comparison {
 		}
 		c.Graphs[v.Kind.String()] = gs
 	}
+	var hubNames []string
+	for _, h := range ci.Common.Hubs {
+		hubNames = append(hubNames, h.Node)
+	}
+	c.EdgeDiff = DiffEdges(ci.Combined, hubNames)
 	for _, p := range comparePairs {
 		c.CommunityDiff.Pairs = append(c.CommunityDiff.Pairs, DiffCommunities(views[p[0]], views[p[1]]))
 	}
@@ -119,6 +125,11 @@ func WriteComparisonText(w io.Writer, c *Comparison) {
 	}
 	p("")
 
+	p("■ Edge Diff — 関係ごとに、DB の制約(Physical)・ORM の宣言(Logical)・実行時の共起(Observed)のどれにあるか")
+	writeEdgeDiffText(p, "通常の関係", c.EdgeDiff.Edges, c.EdgeDiff.Counts)
+	writeEdgeDiffText(p, "hub に接する関係", c.EdgeDiff.HubEdges, c.EdgeDiff.HubCounts)
+	p("")
+
 	p("■ Community Diff — 分割はどれだけ一致するか(ARI: 1 = 同じ分割 / 0 = 偶然と同程度)")
 	for _, d := range c.CommunityDiff.Pairs {
 		p("  %s × %s: ARI %s(共通頂点 %d)/ 両方で非孤立の頂点だけなら %s(%d)",
@@ -141,6 +152,65 @@ func WriteComparisonText(w io.Writer, c *Comparison) {
 		}
 	}
 	p("")
+}
+
+// edgeClassNotes は分類の読み方。断定はしない(候補を並べるだけ)。
+var edgeClassNotes = []struct{ class, label, note string }{
+	{EdgeLogicalOnly, "Logical Only", "ORM にあるが DB が強制していない — FK 未整備か、意図的なアプリ側整合"},
+	{EdgePhysicalOnly, "Physical Only", "DB の制約はあるが ORM に宣言が無い — ORM を通らない処理か、乖離の候補"},
+	{EdgeObservedOnly, "Observed Only", "実行時に共起したが宣言が無い — 生 SQL / 動的クエリの調査対象"},
+	{EdgeUndetermined, "判定不能", "片方のソースが端のテーブルを見ていない — 「無い」とは言えない"},
+}
+
+func edgeRowText(r EdgeDiffRow) string {
+	s := r.A + " × " + r.B
+	if r.ChildTable != "" {
+		s = fmt.Sprintf("%s.%s → %s", r.ChildTable, strings.Join(r.ChildCols, ","), r.ParentTable)
+	}
+	if r.Observed == Present {
+		s += fmt.Sprintf("  [共起 ×%d npmi=%.2f]", r.CoocCount, r.CoocNPMI)
+	}
+	return s
+}
+
+func writeEdgeDiffText(p func(string, ...any), title string, rows []EdgeDiffRow, n EdgeDiffCounts) {
+	p("  %s(%d): 一致 %d / Logical Only %d / Physical Only %d / Observed Only %d / 判定不能 %d",
+		title, len(rows), n.Both, n.LogicalOnly, n.PhysicalOnly, n.ObservedOnly, n.Undetermined)
+	for _, cn := range edgeClassNotes {
+		first := true
+		for _, r := range rows {
+			if r.Class != cn.class {
+				continue
+			}
+			if first {
+				p("    %s(%s):", cn.label, cn.note)
+				first = false
+			}
+			p("        %s", edgeRowText(r))
+		}
+	}
+}
+
+func presenceMark(v Presence) string {
+	switch v {
+	case Present:
+		return "●"
+	case Absent:
+		return "—"
+	}
+	return "?"
+}
+
+func edgeClassLabel(class string) string {
+	if class == EdgeBoth {
+		return "一致"
+	}
+	for _, cn := range edgeClassNotes {
+		if cn.class == class {
+			return cn.label
+		}
+	}
+	return class
 }
 
 func ariText(v *float64) string {
@@ -194,6 +264,31 @@ func WriteComparisonHTML(w io.Writer, c *Comparison) {
 			kind, g.FKCount, g.Modularity, strings.Join(comms, "<br>"), iso)
 	}
 	p(`</table></div>`)
+
+	edgeTable := func(title string, rows []EdgeDiffRow, n EdgeDiffCounts) {
+		if len(rows) == 0 {
+			return
+		}
+		p(`<p class="sub"><b>%s</b>(%d): 一致 %d / Logical Only %d / Physical Only %d / Observed Only %d / 判定不能 %d</p>
+<div class="tw"><table><tr><th>関係</th><th>Physical</th><th>Logical</th><th>Observed</th><th>分類</th></tr>`,
+			esc(title), len(rows), n.Both, n.LogicalOnly, n.PhysicalOnly, n.ObservedOnly, n.Undetermined)
+		for _, r := range rows {
+			cls := ""
+			if r.Class != EdgeBoth {
+				cls = ` class="w3"`
+			}
+			p(`<tr><td><code>%s</code></td><td>%s</td><td>%s</td><td>%s</td><td%s>%s</td></tr>`,
+				esc(edgeRowText(r)), presenceMark(r.Physical), presenceMark(r.Logical), presenceMark(r.Observed),
+				cls, esc(edgeClassLabel(r.Class)))
+		}
+		p(`</table></div>`)
+	}
+	p(`<h2>Edge Diff — 関係 × {Physical, Logical, Observed}</h2>
+<p class="sub">● = ある / — = 見たうえで無い / ? = そのソースは見ていない(無いとは言えない)。
+Logical Only は FK 未整備か意図的なアプリ側整合、Physical Only は ORM を通らない処理か乖離の候補、
+Observed Only は生 SQL / 動的クエリの調査対象。</p>`)
+	edgeTable("通常の関係", c.EdgeDiff.Edges, c.EdgeDiff.Counts)
+	edgeTable("hub に接する関係", c.EdgeDiff.HubEdges, c.EdgeDiff.HubCounts)
 
 	p(`<h2>Community Diff — 分割はどれだけ一致するか</h2>
 <p class="sub">ARI: 1 = 同じ分割 / 0 = 偶然と同程度。「孤立」は移動ではなく、その見方の入力に関係が現れなかったことを指す。</p>

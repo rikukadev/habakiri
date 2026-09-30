@@ -1,5 +1,8 @@
 -- 合成スキーマ B: A の注文まわりにだけ FK を張った DB(一部だけ整備が進んだ状態)。
--- 記事まわりは A と同じく FK なし。audit_log → account は ORM に宣言の無い FK。
+-- 記事まわりは A と同じく FK なし。ORM に宣言の無い物理 FK が 2 本ある:
+--   payment.customer_id → customer … 両端にモデルがある(Physical Only)
+--   audit_log.account_id → account … audit_log にはモデルが無い。静的解析が
+--     そのテーブルを見ていないので「宣言が無い」とは言えない(判定不能)
 --
 -- CASCADE は意図的に入れていない: 比較モードの縮約は combined から決まるので、
 -- B にだけ CASCADE があると「宣言は同じなのに Logical の頂点が変わる」ことになり、
@@ -50,7 +53,8 @@ CREATE TABLE purchase_item (
 );
 CREATE TABLE payment (
   id serial PRIMARY KEY,
-  purchase_id int NOT NULL REFERENCES purchase(id)
+  purchase_id int NOT NULL REFERENCES purchase(id),
+  customer_id int REFERENCES customer(id)                  -- モデルは両端にあるが、ORM に宣言が無い
 );
 CREATE TABLE shipment (
   id serial PRIMARY KEY,

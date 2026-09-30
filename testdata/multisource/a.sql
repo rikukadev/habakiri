@@ -51,7 +51,8 @@ CREATE TABLE purchase_item (
 );
 CREATE TABLE payment (
   id serial PRIMARY KEY,
-  purchase_id int NOT NULL
+  purchase_id int NOT NULL,
+  customer_id int
 );
 CREATE TABLE shipment (
   id serial PRIMARY KEY,
