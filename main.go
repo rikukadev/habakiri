@@ -1,0 +1,94 @@
+// FK グラフから「切れる場所」を機械的に出す CLI(v1: MySQL 専用)。
+//
+// 手順: information_schema を 1 パス読む → 平行 FK を束ねる → CASCADE 縮約 →
+// hub 除外 → 橋検出(Tarjan) → 橋ブロック木を出力。
+// 出力は 3 方向: 今日切れる(橋・孤立) / 目指す境界(ブロック) / 人間が決める(hub)。
+//
+// 名前は未定なので、バイナリ名(os.Args[0])に依存しない書き方をしている。
+package main
+
+import (
+	"database/sql"
+	"flag"
+	"fmt"
+	"os"
+	"path/filepath"
+
+	_ "github.com/go-sql-driver/mysql"
+)
+
+var version = "dev"
+
+func main() {
+	os.Exit(run())
+}
+
+func run() int {
+	prog := filepath.Base(os.Args[0])
+	fs := flag.NewFlagSet(prog, flag.ContinueOnError)
+	dsn := fs.String("dsn", os.Getenv("CARVE_DSN"),
+		"MySQL DSN (user:pass@tcp(host:3306)/dbname)。環境変数 CARVE_DSN でも可")
+	jsonOut := fs.Bool("json", false, "JSON で出力")
+	mermaid := fs.String("mermaid", "", "Mermaid 図をこのファイルへ書き出す")
+	hub := fs.Int("hub", 0, "hub 判定の次数閾値(0 = 自動: max(6, ノード数の 15%))")
+	showVersion := fs.Bool("version", false, "バージョン表示")
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, `%s: FK グラフから分割可能なポイントを出す(MySQL)
+
+使い方:
+  %s --dsn "user:pass@tcp(127.0.0.1:3306)/mydb" [--json] [--mermaid out.mmd] [--hub N]
+
+読み取り専用。information_schema しか見ない。
+`, prog, prog)
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(os.Args[1:]); err != nil {
+		return 2
+	}
+	if *showVersion {
+		fmt.Println(prog, version)
+		return 0
+	}
+	if *dsn == "" {
+		fs.Usage()
+		return 2
+	}
+
+	db, err := sql.Open("mysql", *dsn)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, prog+":", err)
+		return 1
+	}
+	defer func() { _ = db.Close() }()
+
+	sc, err := Scan(db)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, prog+":", err)
+		return 1
+	}
+
+	a := Analyze(sc, *hub)
+
+	if *mermaid != "" {
+		f, err := os.Create(*mermaid)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, prog+":", err)
+			return 1
+		}
+		WriteMermaid(f, a)
+		if err := f.Close(); err != nil {
+			fmt.Fprintln(os.Stderr, prog+":", err)
+			return 1
+		}
+	}
+
+	if *jsonOut {
+		if err := WriteJSON(os.Stdout, a); err != nil {
+			fmt.Fprintln(os.Stderr, prog+":", err)
+			return 1
+		}
+		return 0
+	}
+	WriteText(os.Stdout, a)
+	return 0
+}

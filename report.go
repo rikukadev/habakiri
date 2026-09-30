@@ -1,0 +1,265 @@
+// report.go: 解析結果の出力(テキスト / JSON / Mermaid)。
+//
+// 出力は 3 種類の行き先に分かれる:
+//
+//	今日切れる(橋) / 目指す境界(ブロック) / 人間が決める(hub・注記)
+//
+// クラスタの絵で終わらせず「切る FK の作業リスト」まで落とすのがこのツールの主張。
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"sort"
+	"strings"
+)
+
+// Analysis は解析の全結果(JSON 出力の形そのもの)。
+type Analysis struct {
+	Schema        string              `json:"schema"`
+	TableCount    int                 `json:"table_count"`
+	FKCount       int                 `json:"fk_count"`
+	Isolated      []string            `json:"isolated_tables"` // FK が 1 本も無い = 既に自由
+	Hubs          []Hub               `json:"shared_kernel"`   // 除外した高次数ノード
+	HubThreshold  int                 `json:"hub_threshold"`
+	CascadeGroups map[string][]string `json:"cascade_groups"`   // ライフサイクル一体(縮約済み)
+	Blocks        [][]string          `json:"blocks"`           // 2-辺連結成分(縮約後ノード名)
+	Bridges       []BridgeReport      `json:"bridges"`          // 切断点
+	ThinSeams     []SeamReport        `json:"thinnest_seams"`   // 橋が無いときの候補
+	CrossFKs      []FK                `json:"cross_schema_fks"` // スキーマ跨ぎ(最優先で殲滅)
+	Notes         []string            `json:"notes"`
+}
+
+// BridgeReport は橋 1 本の切断計画。
+type BridgeReport struct {
+	A          string  `json:"a"`
+	B          string  `json:"b"`
+	Weight     float64 `json:"weight"`
+	SideASize  int     `json:"side_a_size"` // 切ったとき A 側に残るノード数
+	SideBSize  int     `json:"side_b_size"`
+	FKs        []FK    `json:"fks"`
+	Difficulty string  `json:"difficulty"` // 易 / 中
+}
+
+// SeamReport は橋ではないが最も細い継ぎ目。
+type SeamReport struct {
+	A      string  `json:"a"`
+	B      string  `json:"b"`
+	Weight float64 `json:"weight"`
+	FKs    int     `json:"fk_count"`
+}
+
+// Analyze がパイプライン本体。
+func Analyze(sc *ScanResult, hubThreshold int) *Analysis {
+	a := &Analysis{
+		Schema:     sc.Schema,
+		TableCount: len(sc.Tables),
+		FKCount:    len(sc.FKs) + len(sc.CrossFKs),
+		CrossFKs:   sc.CrossFKs,
+	}
+
+	// 孤立テーブル(どの FK にも現れない)
+	inGraph := map[string]bool{}
+	for _, fk := range sc.FKs {
+		inGraph[fk.ChildTable] = true
+		inGraph[fk.ParentTable] = true
+	}
+	// スキーマ跨ぎ FK の子は「孤立」ではない(既に Cross 枠で報告される)。
+	for _, fk := range sc.CrossFKs {
+		inGraph[fk.ChildTable] = true
+	}
+	for _, t := range sc.Tables {
+		if !inGraph[t] {
+			a.Isolated = append(a.Isolated, t)
+		}
+	}
+
+	// 1. 束ね → 2. CASCADE 縮約
+	edges := BuildEdges(sc.FKs)
+	edges, a.CascadeGroups = Contract(edges)
+
+	// 3. hub 除外
+	nodeSet := map[string]bool{}
+	for p := range edges {
+		nodeSet[p.A] = true
+		nodeSet[p.B] = true
+	}
+	if hubThreshold <= 0 {
+		hubThreshold = AutoHubThreshold(len(nodeSet))
+	}
+	a.HubThreshold = hubThreshold
+	edges, a.Hubs = RemoveHubs(edges, hubThreshold)
+
+	// 4. 橋 → 5. ブロック
+	bridges := Bridges(edges)
+	a.Blocks = Blocks(edges, bridges)
+	blockOf := BlockOf(a.Blocks)
+
+	// 縮約ノード 1 個が実テーブル N 個を含むことがあるので、人に見せる
+	// サイズは常にテーブル数で数える(ノード数だと過小に見える)。
+	tableCount := func(node string) int {
+		if ms, ok := a.CascadeGroups[node]; ok {
+			return len(ms)
+		}
+		return 1
+	}
+	blockTables := func(bi int) int {
+		n := 0
+		for _, m := range a.Blocks[bi] {
+			n += tableCount(m)
+		}
+		return n
+	}
+
+	for _, bp := range bridges {
+		e := edges[bp]
+		br := BridgeReport{A: bp.A, B: bp.B, Weight: e.Weight, FKs: e.FKs}
+		// 橋を切った後、両端は別ブロックに落ちる…のではなく、橋除去後の
+		// ブロック表で両端のブロックサイズを引く(橋はブロック間の辺)。
+		br.SideASize = blockTables(blockOf[bp.A])
+		br.SideBSize = blockTables(blockOf[bp.B])
+		br.Difficulty = "易(NULL 許容のみ — 値参照化だけで切れる)"
+		for _, fk := range e.FKs {
+			if fk.AllNotNull {
+				br.Difficulty = "中(NOT NULL あり — 既定値かバックフィルの設計が要る)"
+				break
+			}
+		}
+		a.Bridges = append(a.Bridges, br)
+	}
+	sort.Slice(a.Bridges, func(i, j int) bool {
+		return a.Bridges[i].Weight < a.Bridges[j].Weight // 軽いものから着手
+	})
+
+	for _, e := range ThinnestSeams(edges, bridges, 5) {
+		a.ThinSeams = append(a.ThinSeams, SeamReport{
+			A: e.A, B: e.B, Weight: e.Weight, FKs: len(e.FKs)})
+	}
+
+	a.Notes = append(a.Notes,
+		"FK が無いことは無関係の証明ではない — アプリ層 JOIN・ポリモーフィック関連は静的スキャンでは見えない。クエリログ由来の共起で補うのは今後の拡張。",
+		"CASCADE 集約は「切らない」判断を機械化したもの。切りたくなったらまず CASCADE を外す設計判断が先。",
+	)
+	return a
+}
+
+// WriteText は人間向けレポート。
+func WriteText(w io.Writer, a *Analysis) {
+	p := func(format string, args ...any) { _, _ = fmt.Fprintf(w, format+"\n", args...) }
+
+	p("スキーマ %s: %d テーブル / %d FK", a.Schema, a.TableCount, a.FKCount)
+	p("")
+
+	if len(a.CrossFKs) > 0 {
+		p("■ スキーマ跨ぎ FK(%d 本)— DDL ロックが他スキーマに波及する。最優先で切る", len(a.CrossFKs))
+		for _, fk := range a.CrossFKs {
+			p("  %s.%s → %s.%s (%s)", a.Schema, fk.ChildTable, fk.ParentSchema, fk.ParentTable, fk.Constraint)
+		}
+		p("")
+	}
+
+	if len(a.Isolated) > 0 {
+		p("■ 孤立テーブル(%d)— FK が無く、今日でも動かせる", len(a.Isolated))
+		p("  %s", strings.Join(a.Isolated, ", "))
+		p("")
+	}
+
+	if len(a.Hubs) > 0 {
+		p("■ shared kernel 候補(次数 >= %d で除外)— 分割せず参照データとして共有 or 複製", a.HubThreshold)
+		for _, h := range a.Hubs {
+			p("  %-30s 次数 %d", h.Node, h.Degree)
+		}
+		p("")
+	}
+
+	if len(a.CascadeGroups) > 0 {
+		p("■ CASCADE 集約(ライフサイクル一体 — 同じサービスから出さない)")
+		var roots []string
+		for r := range a.CascadeGroups {
+			roots = append(roots, r)
+		}
+		sort.Strings(roots)
+		for _, r := range roots {
+			p("  [%s] %s", r, strings.Join(a.CascadeGroups[r], ", "))
+		}
+		p("")
+	}
+
+	if len(a.Bridges) > 0 {
+		p("■ 橋 = 切断点(%d 本)— 1 本切るだけで塊が分離する", len(a.Bridges))
+		for _, b := range a.Bridges {
+			p("  %s ×— %s   重み %.0f   分離後 %d ↔ %d テーブル", b.A, b.B, b.Weight, b.SideASize, b.SideBSize)
+			for _, fk := range b.FKs {
+				null := "NULL可"
+				if fk.AllNotNull {
+					null = "NOT NULL"
+				}
+				p("      %s.%s(%s) → %s  [%s / %s]", fk.ChildTable,
+					strings.Join(fk.ChildCols, ","), null, fk.ParentTable, fk.DeleteRule, fk.Constraint)
+			}
+			p("      難易度: %s", b.Difficulty)
+		}
+		p("")
+	} else {
+		p("■ 橋なし — 1 本で分離できるポイントは無い(密結合)。最薄の継ぎ目から:")
+		for _, s := range a.ThinSeams {
+			p("  %s — %s   重み %.0f (FK %d 本)", s.A, s.B, s.Weight, s.FKs)
+		}
+		p("")
+	}
+
+	p("■ ブロック(2-辺連結成分)— 内部は密。これ以上の分割は段階 2 の設計判断")
+	for i, b := range a.Blocks {
+		total := 0
+		names := make([]string, 0, len(b))
+		for _, n := range b {
+			if ms, ok := a.CascadeGroups[n]; ok {
+				total += len(ms)
+				names = append(names, fmt.Sprintf("%s(+%d)", n, len(ms)-1))
+			} else {
+				total++
+				names = append(names, n)
+			}
+		}
+		label := strings.Join(names, ", ")
+		if len(names) > 8 {
+			label = strings.Join(names[:8], ", ") + fmt.Sprintf(" … 他 %d", len(names)-8)
+		}
+		p("  B%-2d (%d tables) %s", i, total, label)
+	}
+	p("")
+	for _, n := range a.Notes {
+		p("注: %s", n)
+	}
+}
+
+// WriteJSON は機械可読出力。
+func WriteJSON(w io.Writer, a *Analysis) error {
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(a)
+}
+
+// WriteMermaid は橋ブロック木を図にする(ブロック = subgraph、橋 = 太線)。
+func WriteMermaid(w io.Writer, a *Analysis) {
+	p := func(format string, args ...any) { _, _ = fmt.Fprintf(w, format+"\n", args...) }
+	p("flowchart LR")
+	for i, b := range a.Blocks {
+		p("  subgraph B%d[\"B%d (%d tables)\"]", i, i, len(b))
+		for _, n := range b {
+			p("    %s[\"%s\"]", sanitizeID(n), n)
+		}
+		p("  end")
+	}
+	for _, h := range a.Hubs {
+		p("  %s{{\"%s (hub, deg %d)\"}}", sanitizeID(h.Node), h.Node, h.Degree)
+	}
+	for _, b := range a.Bridges {
+		p("  %s ==\"cut? w=%.0f\"==> %s", sanitizeID(b.A), b.Weight, sanitizeID(b.B))
+	}
+}
+
+func sanitizeID(s string) string {
+	return strings.NewReplacer("-", "_", ".", "_", " ", "_").Replace(s)
+}
