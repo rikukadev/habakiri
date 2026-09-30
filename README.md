@@ -31,6 +31,7 @@ $ habakiri --yii1  /path/to/yii1app                       # Yii1 relations()(DB 
 | `--cut-level 1..3` | 切った後の図の深さ(既定 1) |
 | `--html` | 全図 + 全表の自己完結 1 ファイル(CDN/JS 依存なし) |
 | `--cooc FILE` | 同一 tx 書き込み共起のログ(MySQL general log / Postgres log_statement=all / 1 行 1 tx の中立形式を自動判別) |
+| `--baseline FILE` | 過去の `--json` と比較し、結合の逆行(新規 FK ペア・hub 契約増・跨ぎ FK 増)で exit 3 — CI に置く計器 |
 
 DSN は環境変数 `HABAKIRI_DSN` でも渡せる。
 
