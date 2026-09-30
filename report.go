@@ -57,6 +57,7 @@ func Analyze(sc *ScanResult, hubThreshold int) *Analysis {
 		TableCount: len(sc.Tables),
 		FKCount:    len(sc.FKs) + len(sc.CrossFKs),
 		CrossFKs:   sc.CrossFKs,
+		Notes:      append([]string(nil), sc.Notes...), // ソース固有の注意を合流
 	}
 
 	// 孤立テーブル(どの FK にも現れない)

@@ -28,6 +28,9 @@ type ScanResult struct {
 	Tables   []string `json:"tables"`
 	FKs      []FK     `json:"fks"`
 	CrossFKs []FK     `json:"cross_schema_fks"` // 別スキーマの親を指す FK(DDL ロックが跨ぐ)
+	// Notes: ソース固有の注意(静的ソースの未解決ポリモーフィック等)。
+	// Analyze がレポートの注へ合流させる。
+	Notes []string `json:"notes,omitempty"`
 }
 
 // Scan は DSN のスキーマを読む。

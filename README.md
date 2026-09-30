@@ -11,6 +11,9 @@
 読み取り専用。MySQL は information_schema、Postgres は pg_catalog しか見ない。
 DSN のスキーム(`postgres://`)で自動判別する。
 
+DB が無くても使える: `--rails` / `--yii1` は ActiveRecord の関連宣言を静的に読む。
+FK を張らない文化圏で「宣言された関係」を回収するための入口(後述)。
+
 ## インストール
 
 ```console
@@ -26,6 +29,24 @@ $ habakiri --dsn "postgres://user:pass@127.0.0.1:5432/mydb"                     
 
 Postgres の対象は `current_schema()`(通常 public)。別スキーマは DSN の
 `?search_path=...` で切り替える。
+
+```console
+$ habakiri --rails /path/to/railsapp   # app/models の belongs_to / has_many を読む(DB 不要)
+$ habakiri --yii1  /path/to/yii1app    # protected/models の relations() を読む(DB 不要)
+```
+
+静的ソースの重みの写像:
+
+| 宣言 | 対応 | 重み |
+|---|---|---|
+| Rails `dependent: :destroy` / `:delete_all` | CASCADE | 3 |
+| Rails `belongs_to`(5+ は必須が既定) | NOT NULL | 2 |
+| Rails `belongs_to ..., optional: true` / Yii1 全般 | NULLABLE | 1 |
+
+Yii1 の `relations()` には必須性もカスケードも宣言できないため重みは一律 1。
+実務のカスケードは `beforeDelete()` の手書き削除に現れるので、callback を持つ
+モデルの宣言外の他モデル言及は**注記**として出す(偽エッジは作らない)。
+`MANY_MANY` は `'join(col1, col2)'` 形式から中間テーブルの FK 2 本を合成する。
 
 DSN は環境変数 `HABAKIRI_DSN` でも渡せる(パスワードをシェル履歴に残さないため)。
 
@@ -80,9 +101,11 @@ DROP した FK を巻き戻すことがあるので、切断の実施は**スキ
 
 ## 既知の限界
 
-- **FK が無いことは無関係の証明ではない。** アプリ層 JOIN・ポリモーフィック
-  関連(Rails 等)は静的スキャンでは見えない。クエリログ由来の共起で
-  重みを補正するのは今後の拡張(口は Analyze の重みに開けてある)
+- **FK が無いことは無関係の証明ではない。** 関連宣言は `--rails` / `--yii1` で
+  読めるようになったが、生 SQL・サービス層の暗黙結合はまだ見えない。
+  クエリログ由来の共起で重みを補正するのは今後の拡張(口は Analyze の重みに開けてある)
+- 静的ソースのインフレクタは簡易実装。テーブル名が外れるモデルには
+  `self.table_name` / `tableName()` を書けば勝つ
 - hub 閾値の既定(max(6, ノード数の 15%))は経験則。小さいスキーマでは
   `--hub` で明示するほうがよい
 - 橋が 0 本の密結合スキーマでは「最薄の継ぎ目」(重み最小エッジ)への
