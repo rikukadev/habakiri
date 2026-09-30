@@ -10,6 +10,12 @@ class Post extends CActiveRecord
             'categories' => array(self::MANY_MANY, 'Category', '{{post_category}}(post_id, category_id)'),
         );
     }
+    public function refreshMetrics()
+    {
+        Yii::app()->db->createCommand("DELETE FROM {{attachment}} WHERE orphan = 1")->execute();
+        Yii::app()->db->createCommand()->update('tbl_user', array('post_count' => 0));
+    }
+
     public function beforeDelete()
     {
         foreach (Attachment::model()->findAllByAttributes(array('post_id' => $this->id)) as $a) {

@@ -171,6 +171,11 @@ func yiiToScan(dir string, models map[string]*yiiModel) *ScanResult {
 		}
 	}
 
+	tableSet := map[string]bool{}
+	for t := range tables {
+		tableSet[t] = true
+	}
+
 	// 宣言外の他モデル言及は全モデルで注記する(エッジにはしない)。
 	// Yii1 は relations にカスケードを書けず beforeDelete に手書きされがちなので、
 	// callback / behaviors 持ちは「強」、それ以外(メソッドからの参照)は「弱」。
@@ -213,6 +218,25 @@ func yiiToScan(dir string, models map[string]*yiiModel) *ScanResult {
 	}
 	res.Notes = append(res.Notes, strongNotes...)
 	res.Notes = append(res.Notes, weakNotes...)
+
+	// 生 SQL / コマンドビルダの書き込み先([強]— 宣言に一切現れない実結合)
+	for _, cc := range classes {
+		m := models[cc]
+		var hits []string
+		for _, t := range extractRawWriteTables(m.fileSrc) {
+			if t == m.tableName || !tableSet[t] {
+				continue // 自分自身と、モデルに対応しないテーブル名(誤爆)は除く
+			}
+			hits = append(hits, t)
+			res.Suspects = append(res.Suspects, Suspect{
+				FromTable: m.tableName, ToTable: t, Strong: true})
+		}
+		if len(hits) > 0 {
+			res.Notes = append(res.Notes,
+				fmt.Sprintf("[強] %s: 生SQL/コマンドビルダで %s へ書き込み — 宣言に現れない実結合",
+					cc, strings.Join(hits, ", ")))
+		}
+	}
 
 	res.Notes = append(res.Notes,
 		"yii1 ソース: relations() に必須性/カスケードの宣言が無いため重みは一律 1。DB スキャン(--dsn)との併用を推奨")
