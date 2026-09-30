@@ -27,6 +27,28 @@ jobs:
         with:
           version: latest
 
+  # 実 Postgres での E2E(スキャナ・delete_rule 写像・複合 FK・縮約・橋を通しで見る)。
+  postgres-e2e:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: habakiri
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - run: go build -o habakiri .
+      - run: ./e2e/postgres.sh "postgres://postgres:habakiri@127.0.0.1:5432/postgres" ./habakiri
+
   # 既知の脆弱性チェック。advisory 運用(必須 check にしない)— sashiki と同じ方針。
   vuln:
     runs-on: ubuntu-latest

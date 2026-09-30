@@ -1,9 +1,6 @@
 // scan.go: MySQL の information_schema から FK グラフの材料を 1 パスで読む。
 // 読み取り専用。対象は DSN が指すスキーマ(DATABASE())のみ。
-//
-// Postgres は best-effort で後回し(v1 は MySQL 専用)。追加するときは
-// information_schema ではなく pg_catalog(pg_constraint.confdeltype)を読む —
-// Postgres の information_schema は遅く、複合 FK の表現も扱いにくい。
+// Postgres 版は scan_postgres.go(pg_catalog を読む)。
 package main
 
 import (
