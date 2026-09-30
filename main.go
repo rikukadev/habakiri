@@ -34,6 +34,7 @@ func main() {
 func run(prog string, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet(prog, flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	errln := func(a ...any) { _, _ = fmt.Fprintln(stderr, a...) }
 	dsn := fs.String("dsn", os.Getenv("HABAKIRI_DSN"),
 		"DSN。MySQL (user:pass@tcp(host:3306)/dbname) または Postgres (postgres://user:pass@host:5432/dbname)。環境変数 HABAKIRI_DSN でも可")
 	railsDir := fs.String("rails", "", "Rails アプリのルート(または app/models)を静的に読む。DB 接続不要")
@@ -59,7 +60,7 @@ func run(prog string, args []string, stdout, stderr io.Writer) int {
 	hub := fs.Int("hub", 0, "hub 判定の次数閾値(0 = 自動: max(6, ノード数の 15%))")
 	showVersion := fs.Bool("version", false, "バージョン表示")
 	fs.Usage = func() {
-		fmt.Fprintf(stderr, `%s: FK グラフから分割可能なポイントを出す(MySQL / Postgres)
+		_, _ = fmt.Fprintf(stderr, `%s: FK グラフから分割可能なポイントを出す(MySQL / Postgres)
 
 使い方:
   %s --dsn "user:pass@tcp(127.0.0.1:3306)/mydb" [--json] [--mermaid out.mmd] [--hub N]
@@ -86,7 +87,7 @@ func run(prog string, args []string, stdout, stderr io.Writer) int {
 	}
 	if sources != 1 {
 		if sources > 1 {
-			fmt.Fprintln(stderr, prog+": --dsn / --schema-json / --rails / --yii1 はどれか 1 つだけ")
+			errln(prog+": --dsn / --schema-json / --rails / --yii1 はどれか 1 つだけ")
 		} else {
 			fs.Usage()
 		}
@@ -112,26 +113,26 @@ func run(prog string, args []string, stdout, stderr io.Writer) int {
 		var db *sql.DB
 		db, err = sql.Open(driver, *dsn)
 		if err != nil {
-			fmt.Fprintln(stderr, prog+":", err)
+			errln(prog+":", err)
 			return 1
 		}
 		defer func() { _ = db.Close() }()
 		sc, err = scan(db)
 	}
 	if err != nil {
-		fmt.Fprintln(stderr, prog+":", err)
+		errln(prog+":", err)
 		return 1
 	}
 	if *dumpSchema != "" {
 		if err := DumpSchemaJSON(*dumpSchema, sc); err != nil {
-			fmt.Fprintln(stderr, prog+":", err)
+			errln(prog+":", err)
 			return 1
 		}
 	}
 	if *coocFile != "" {
 		cooc, err := LoadCooc(*coocFile)
 		if err != nil {
-			fmt.Fprintln(stderr, prog+":", err)
+			errln(prog+":", err)
 			return 1
 		}
 		sc.Cooc = cooc
@@ -141,12 +142,12 @@ func run(prog string, args []string, stdout, stderr io.Writer) int {
 	if *patternsFile != "" {
 		raw, err := os.ReadFile(*patternsFile)
 		if err != nil {
-			fmt.Fprintln(stderr, prog+":", err)
+			errln(prog+":", err)
 			return 1
 		}
 		var pm map[string]string
 		if err := json.Unmarshal(raw, &pm); err != nil {
-			fmt.Fprintln(stderr, prog+":", err)
+			errln(prog+":", err)
 			return 1
 		}
 		for k, v := range pm {
@@ -164,12 +165,12 @@ func run(prog string, args []string, stdout, stderr io.Writer) int {
 		tChurn := map[string]int{}
 		if *churnDir != "" {
 			if len(sc.FileTables) == 0 {
-				fmt.Fprintln(stderr, prog+": --churn は静的ソース(--rails/--yii1)と併用してください(ファイル→テーブル対応が要る)")
+				errln(prog+": --churn は静的ソース(--rails/--yii1)と併用してください(ファイル→テーブル対応が要る)")
 				return 2
 			}
 			fc, err := LoadChurn(*churnDir)
 			if err != nil {
-				fmt.Fprintln(stderr, prog+":", err)
+				errln(prog+":", err)
 				return 1
 			}
 			tChurn = tableChurn(sc.FileTables, fc)
@@ -179,7 +180,7 @@ func run(prog string, args []string, stdout, stderr io.Writer) int {
 			var err error
 			tCrit, err = LoadCriticality(*critFile)
 			if err != nil {
-				fmt.Fprintln(stderr, prog+":", err)
+				errln(prog+":", err)
 				return 1
 			}
 		}
@@ -192,12 +193,12 @@ func run(prog string, args []string, stdout, stderr io.Writer) int {
 		}
 		f, err := os.Create(path)
 		if err != nil {
-			fmt.Fprintln(stderr, prog+":", err)
+			errln(prog+":", err)
 			return false
 		}
 		write(f)
 		if err := f.Close(); err != nil {
-			fmt.Fprintln(stderr, prog+":", err)
+			errln(prog+":", err)
 			return false
 		}
 		return true
@@ -211,15 +212,15 @@ func run(prog string, args []string, stdout, stderr io.Writer) int {
 		}
 		f, err := os.Create(path)
 		if err != nil {
-			fmt.Fprintln(stderr, prog+":", err)
+			errln(prog+":", err)
 			return false
 		}
 		if err := render(f, a); err != nil {
-			fmt.Fprintln(stderr, prog+":", err)
+			errln(prog+":", err)
 			return false
 		}
 		if err := f.Close(); err != nil {
-			fmt.Fprintln(stderr, prog+":", err)
+			errln(prog+":", err)
 			return false
 		}
 		return true
@@ -248,7 +249,7 @@ func run(prog string, args []string, stdout, stderr io.Writer) int {
 	if *baseline != "" {
 		prev, err := LoadBaseline(*baseline)
 		if err != nil {
-			fmt.Fprintln(stderr, prog+":", err)
+			errln(prog+":", err)
 			return 1
 		}
 		if CompareBaseline(stdout, prev, a) {
@@ -259,7 +260,7 @@ func run(prog string, args []string, stdout, stderr io.Writer) int {
 
 	if *jsonOut {
 		if err := WriteJSON(stdout, a); err != nil {
-			fmt.Fprintln(stderr, prog+":", err)
+			errln(prog+":", err)
 			return 1
 		}
 		return 0

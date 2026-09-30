@@ -33,17 +33,10 @@ type Edge struct {
 	HasCascade bool
 }
 
-// fkWeight は FK 1 本の結合強度。静的な本数勘定より属性の階層が効く:
-// CASCADE(ライフサイクル共有)> NOT NULL(存在依存)> NULLABLE(弱い参照)。
+// fkWeight は FK 1 本の結合強度(理由付きの本体は provenance.go の weightOf)。
 func fkWeight(fk FK) float64 {
-	switch {
-	case fk.DeleteRule == "CASCADE":
-		return 3
-	case fk.AllNotNull:
-		return 2
-	default:
-		return 1
-	}
+	w, _ := weightOf(fk)
+	return w
 }
 
 // BuildEdges は FK をテーブル対ごとに束ねる。自己参照(木構造・隣接リスト)は
