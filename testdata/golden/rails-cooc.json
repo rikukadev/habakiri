@@ -256,7 +256,8 @@
         ],
         "hubs": null,
         "glue": {
-          "FK": 4
+          "FK": 4,
+          "疑い": 1
         }
       },
       {
@@ -276,8 +277,8 @@
         }
       }
     ],
-    "modularity": 0.25346260387811625,
-    "max_modularity": 0.25346260387811625,
+    "modularity": 0.24376417233560083,
+    "max_modularity": 0.24376417233560083,
     "levels": [
       {
         "k": 1,
@@ -303,14 +304,15 @@
             ],
             "glue": {
               "FK": 4,
-              "hub契約": 6
+              "hub契約": 6,
+              "疑い": 1
             }
           }
         ]
       },
       {
         "k": 2,
-        "modularity": 0.25346260387811625,
+        "modularity": 0.24376417233560083,
         "groups": [
           {
             "name": "fasp_providers",
@@ -325,7 +327,8 @@
             ],
             "hubs": null,
             "glue": {
-              "FK": 4
+              "FK": 4,
+              "疑い": 1
             }
           },
           {
@@ -465,15 +468,32 @@
       "from_table": "webauthn_credentials",
       "to_table": "users",
       "strong": false
+    },
+    {
+      "from_table": "taxonomy",
+      "to_table": "posts",
+      "strong": true
+    },
+    {
+      "from_table": "taxonomy",
+      "to_table": "comments",
+      "strong": false
+    },
+    {
+      "from_table": "taxonomy",
+      "to_table": "posts",
+      "strong": false
     }
   ],
   "notes": [
     "[判定不能] 相手のモデルが見つからない関連 1 件は FK にしていない(app/models に居ない gem のモデル等。推測でテーブル名を作ると偽の関係になる): Comment.reviewer → Moderation::Reviewer",
     "[強] Post: callback(concern 含む)+ 宣言外の SearchEntry への言及 — 書き込み結合の疑い",
     "[強] User: callback(concern 含む)+ 宣言外の SearchEntry への言及 — 書き込み結合の疑い",
+    "[強] Category: Post を update_all 等で一括書き込み — コールバックを通らない書き込み結合",
     "[弱] AdminUser: メソッド/スコープから宣言外の User への言及",
     "[弱] Category: メソッド/スコープから宣言外の Post への言及",
     "[弱] WebauthnCredential: メソッド/スコープから宣言外の User への言及",
+    "[弱] Category: 生SQLで comments, posts を読む(read 側の暗黙結合)",
     "観測範囲で共起の無い橋: comments×oauth_access_grants, posts×status_edits — もう守っていない制約の可能性(ただし観測期間に注意。無いことの証明には使わない)",
     "CASCADE 集約は「切らない」判断を機械化したもの。切りたくなったらまず CASCADE を外す設計判断が先。"
   ]

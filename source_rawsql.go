@@ -17,7 +17,34 @@ var (
 	reRawWrite = regexp.MustCompile("(?i)\\b(?:INSERT(?:\\s+IGNORE)?\\s+INTO|UPDATE|DELETE\\s+FROM|REPLACE\\s+INTO)\\s+[`\"']?\\{?\\{?([a-zA-Z0-9_$]+)\\}?\\}?")
 	// Yii1 CDbCommand ビルダ: ->insert('tbl'/->update('{{tbl}}'/->delete('tbl'
 	reYiiBuilder = regexp.MustCompile(`->\s*(?:insert|update|delete)\(\s*['"]\{?\{?([a-zA-Z0-9_$]+)\}?\}?['"]`)
+	// 読み取り: FROM / JOIN の直後のテーブル。DELETE FROM は書き込みなので除く
+	reRawRead = regexp.MustCompile("(?i)\\b(DELETE\\s+)?(?:FROM|JOIN)\\s+[`\"']?\\{?\\{?([a-zA-Z0-9_$]+)\\}?\\}?")
+	// Yii1 CDbCommand ビルダの読み取り: ->from('tbl') / ->join('tbl', ...)
+	reYiiBuilderRead = regexp.MustCompile(`->\s*(?:from|join|leftJoin|rightJoin)\(\s*['"]\{?\{?([a-zA-Z0-9_$]+)\}?\}?`)
 )
+
+// extractRawReadTables は生 SQL / コマンドビルダの読み取り先(FROM / JOIN)。
+// コメントは読まない。英語の地の文の from にも当たりうるので、呼び出し側で
+// モデルのあるテーブルに絞る(extractRawWriteTables と同じ規律)。
+func extractRawReadTables(src string) []string {
+	src = maskPHPComments(src)
+	seen := map[string]bool{}
+	for _, m := range reRawRead.FindAllStringSubmatch(src, -1) {
+		if m[1] != "" {
+			continue // DELETE FROM は書き込み
+		}
+		seen[strings.ToLower(m[2])] = true
+	}
+	for _, m := range reYiiBuilderRead.FindAllStringSubmatch(src, -1) {
+		seen[strings.ToLower(m[1])] = true
+	}
+	list := make([]string, 0, len(seen))
+	for t := range seen {
+		list = append(list, t)
+	}
+	sort.Strings(list)
+	return list
+}
 
 // sqlKeyword: reRawWrite の誤爆(コード中の英単語)を減らすため、
 // SQL らしさの弱い UPDATE 単独マッチは引用符か {{ }} 付きのみ採用する。

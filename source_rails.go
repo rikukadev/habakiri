@@ -761,6 +761,30 @@ func railsToScan(dir string, rs *railsSchema) *ScanResult {
 		}
 	}
 
+	// モデル経由の一括書き込み(Foo.update_all 等)。コールバックを通らない
+	// 書き込みなので、宣言済みの相手でも [強]。
+	reBulkWrite := regexp.MustCompile(`\b([A-Z][A-Za-z0-9]*(?:::[A-Z][A-Za-z0-9]*)*)\.(?:where\([^)]*\)\.)?(?:update_all|delete_all|insert_all!?|upsert_all|destroy_all)\b`)
+	for _, cc := range classes {
+		m := models[cc]
+		own := tableOf(models, cc)
+		seen := map[string]bool{}
+		var hits []string
+		for _, w := range reBulkWrite.FindAllStringSubmatch(m.fileSrc, -1) {
+			target, table, ok := rs.target(cc, w[1])
+			if !ok || target == cc || table == own || seen[table] {
+				continue
+			}
+			seen[table] = true
+			hits = append(hits, target)
+			res.Suspects = append(res.Suspects, Suspect{FromTable: own, ToTable: table, Strong: true})
+		}
+		if len(hits) > 0 {
+			sort.Strings(hits)
+			strongNotes = append(strongNotes,
+				fmt.Sprintf("[強] %s: %s を update_all 等で一括書き込み — コールバックを通らない書き込み結合", cc, strings.Join(hits, ", ")))
+		}
+	}
+
 	// 生 SQL(execute / sanitize 済み文字列)の書き込み先([強])
 	tableSet := map[string]bool{}
 	for t := range tables {
@@ -780,6 +804,22 @@ func railsToScan(dir string, rs *railsSchema) *ScanResult {
 		if len(hits) > 0 {
 			strongNotes = append(strongNotes,
 				fmt.Sprintf("[強] %s: 生SQLで %s へ書き込み — 宣言に現れない実結合", cc, strings.Join(hits, ", ")))
+		}
+		written := map[string]bool{}
+		for _, h := range hits {
+			written[h] = true
+		}
+		var reads []string
+		for _, t := range extractRawReadTables(m.fileSrc) {
+			if t == own || !tableSet[t] || written[t] {
+				continue
+			}
+			reads = append(reads, t)
+			res.Suspects = append(res.Suspects, Suspect{FromTable: own, ToTable: t, Strong: false})
+		}
+		if len(reads) > 0 {
+			weakNotes = append(weakNotes,
+				fmt.Sprintf("[弱] %s: 生SQLで %s を読む(read 側の暗黙結合)", cc, strings.Join(reads, ", ")))
 		}
 	}
 

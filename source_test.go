@@ -571,3 +571,59 @@ func TestScanYii1RelationForms(t *testing.T) {
 		t.Errorf("読めなかった宣言の件数の注が無い: %v", sc.Notes)
 	}
 }
+
+// #16: モデル経由の一括書き込み([強])と生 SQL の読み取り([弱])。
+func TestBulkWritesAndRawReads(t *testing.T) {
+	has := func(sc *ScanResult, from, to string, strong bool) bool {
+		for _, s := range sc.Suspects {
+			if s.FromTable == from && s.ToTable == to && s.Strong == strong {
+				return true
+			}
+		}
+		return false
+	}
+	note := func(sc *ScanResult, parts ...string) bool {
+		for _, n := range sc.Notes {
+			ok := true
+			for _, p := range parts {
+				ok = ok && strings.Contains(n, p)
+			}
+			if ok {
+				return true
+			}
+		}
+		return false
+	}
+
+	t.Run("Yii1", func(t *testing.T) {
+		sc, err := ScanYii1("testdata/yii1modules")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !has(sc, "tbl_post", "tbl_user", true) || !note(sc, "[強] Post", "User", "updateAll") {
+			t.Errorf("::model()->updateAll の一括書き込みが [強] で出ていない: %+v %v", sc.Suspects, sc.Notes)
+		}
+		if !has(sc, "tbl_post", "tbl_post_tag", false) || !note(sc, "[弱] Post", "tbl_post_tag", "読む") {
+			t.Errorf("生 SQL の FROM が [弱] で出ていない: %+v %v", sc.Suspects, sc.Notes)
+		}
+		// 書き込み先(DELETE FROM {{user_stat}})は読み取りに重ねない / コメントの中は読まない
+		for _, n := range sc.Notes {
+			if strings.Contains(n, "を読む") && (strings.Contains(n, "tbl_user_stat") || strings.Contains(n, "tbl_user,") || strings.HasSuffix(n, "tbl_user を読む(read 側の暗黙結合)")) {
+				t.Errorf("書き込み先かコメント内のテーブルを読み取りに出した: %s", n)
+			}
+		}
+	})
+
+	t.Run("Rails", func(t *testing.T) {
+		sc, err := ScanRails("testdata/railsapp")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !has(sc, "taxonomy", "posts", true) || !note(sc, "[強] Category", "Post", "update_all") {
+			t.Errorf("update_all の一括書き込みが [強] で出ていない: %+v %v", sc.Suspects, sc.Notes)
+		}
+		if !has(sc, "taxonomy", "comments", false) || !note(sc, "[弱] Category", "comments", "読む") {
+			t.Errorf("生 SQL の JOIN が [弱] で出ていない: %+v %v", sc.Suspects, sc.Notes)
+		}
+	})
+}
