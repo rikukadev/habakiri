@@ -478,7 +478,7 @@ func TestScanYii1Inheritance(t *testing.T) {
 	notes := strings.Join(sc.Notes, "\n")
 
 	t.Run("テーブルは具体的なモデルだけ(基底クラス・動的な名前を数えない)", func(t *testing.T) {
-		want := "answers,settings,x2_accounts,x2_contacts"
+		want := "accounts,answers,contacts,forms,settings"
 		if got := strings.Join(sc.Tables, ","); got != want {
 			t.Errorf("tables = %s, want %s", got, want)
 		}
@@ -490,13 +490,13 @@ func TestScanYii1Inheritance(t *testing.T) {
 
 	t.Run("間接継承のモデルを読む(#47-1)", func(t *testing.T) {
 		// Contact → AppModel → AppActiveRecord → CActiveRecord
-		if _, ok := idx["x2_contacts(account_id)→x2_accounts"]; !ok {
+		if _, ok := idx["contacts(account_id)→accounts"]; !ok {
 			t.Errorf("2 段継承のモデルの関連が無い: %v", idx)
 		}
 	})
 
 	t.Run("短い配列構文の relations も読む", func(t *testing.T) {
-		if _, ok := idx["answers(contact_id)→x2_contacts"]; !ok {
+		if _, ok := idx["answers(contact_id)→contacts"]; !ok {
 			t.Errorf("[self::BELONGS_TO, ...] が読めていない: %v", idx)
 		}
 	})
@@ -535,4 +535,39 @@ func TestScanYii1Inheritance(t *testing.T) {
 			}
 		}
 	})
+}
+
+// #49: relations() の書き方(配列の FK・on 句・::class・大文字小文字違い)と
+// コメントアウトした宣言。
+func TestScanYii1RelationForms(t *testing.T) {
+	sc, err := ScanYii1("testdata/yii1inherit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx := fkIndex(sc.FKs)
+	for key, why := range map[string]string{
+		"forms(owner_id)→contacts":    "FK を列の対応で書く(BELONGS_TO は自分側)",
+		"settings(form_id)→forms":     "HAS_ONE の列の対応は相手側",
+		"answers(form_ref)→forms":     "on 句から列を読む",
+		"forms(account_id)→accounts":  "::class で書いた相手",
+		"forms(reviewer_id)→contacts": "クラス名の大文字小文字違い",
+	} {
+		if _, ok := idx[key]; !ok {
+			t.Errorf("%s が無い(%s): %v", key, why, idx)
+		}
+	}
+	for key := range idx {
+		if strings.Contains(key, "ghost") {
+			t.Errorf("コメントアウトした宣言を読んだ: %s", key)
+		}
+	}
+	found := false
+	for _, n := range sc.Notes {
+		if strings.Contains(n, "relations() の宣言") && strings.Contains(n, "列を特定できない on 句 1") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("読めなかった宣言の件数の注が無い: %v", sc.Notes)
+	}
 }
