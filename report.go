@@ -134,6 +134,13 @@ type SeamReport struct {
 
 // Analyze がパイプライン本体。
 func Analyze(sc *ScanResult, hubThreshold int) *Analysis {
+	return analyze(sc, hubThreshold, nil)
+}
+
+// analyze は Analyze の実体。fixed が非 nil なら hub 集合と CASCADE 縮約を
+// このグラフから決めず、外から与えられたものを使う(比較モード: compare_prep.go)。
+// fixed == nil の経路は従来と 1 行も変わらない。
+func analyze(sc *ScanResult, hubThreshold int, fixed *CommonConditions) *Analysis {
 	a := &Analysis{
 		Schema:     sc.Schema,
 		TableCount: len(sc.Tables),
@@ -156,6 +163,19 @@ func Analyze(sc *ScanResult, hubThreshold int) *Analysis {
 	for _, fk := range sc.CrossFKs {
 		inGraph[fk.ChildTable] = true
 	}
+	if fixed != nil {
+		// 固定された縮約では、グループの誰かが FK を持てばグループ全体が
+		// グラフに居る(1 頂点として扱うので、メンバー単位で孤立にしない)。
+		for _, ms := range fixed.CascadeGroups {
+			any := false
+			for _, m := range ms {
+				any = any || inGraph[m]
+			}
+			for _, m := range ms {
+				inGraph[m] = inGraph[m] || any
+			}
+		}
+	}
 	for _, t := range sc.Tables {
 		if !inGraph[t] {
 			a.Isolated = append(a.Isolated, t)
@@ -176,6 +196,9 @@ func Analyze(sc *ScanResult, hubThreshold int) *Analysis {
 		nodeSet[p.A] = true
 		nodeSet[p.B] = true
 	}
+	if fixed != nil {
+		hubThreshold = fixed.HubThreshold
+	}
 	if hubThreshold <= 0 {
 		hubThreshold = AutoHubThreshold(len(nodeSet))
 	}
@@ -185,8 +208,13 @@ func Analyze(sc *ScanResult, hubThreshold int) *Analysis {
 	for p, e := range edges {
 		preHubEdges[p] = e
 	}
-	edges, a.Hubs = RemoveHubs(edges, hubThreshold)
-	edges, a.CascadeGroups = Contract(edges)
+	if fixed != nil {
+		edges, a.Hubs = removeFixedHubs(edges, fixed.Hubs)
+		edges, a.CascadeGroups = contractFixed(edges, fixed.CascadeGroups)
+	} else {
+		edges, a.Hubs = RemoveHubs(edges, hubThreshold)
+		edges, a.CascadeGroups = Contract(edges)
+	}
 
 	// 縮約が異常肥大したら警告(全体の 25% 超)。CASCADE の使われ方が
 	// 「従属の掃除」寄りのスキーマで、集約推定として信用できない印。
