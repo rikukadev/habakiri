@@ -70,6 +70,18 @@ ON DELETE CASCADE (3)  >  NOT NULL (2)  >  NULLABLE (1)
 CASCADE は Vernon の集約基準(トランザクション整合性とライフサイクルの共有)
 そのものなので、切断候補から機械的に除外してよい。
 
+## 図の機械生成(--svg / --html)
+
+```console
+$ habakiri --dsn ... --svg out.svg    # 決定的レイアウトの SVG(同じ入力 → 同じバイト列)
+$ habakiri --dsn ... --html out.html  # SVG + 切断計画をまとめた自己完結 HTML(CDN/JS 依存なし)
+```
+
+- レイアウトは橋ブロック木の放射ツリー(force ではない)。決定的なのでテスト・diff できる
+- **線種 = つながりの種類**: 実線 = FK、✂ 付き太線 = 橋、点線(紫)= 宣言外の疑い(静的ソースの callback/メソッド言及)
+- **色 = 重み**: グレー(NULL可)/ 青(NOT NULL)/ 朱(CASCADE 級)
+- hub 経由のみで繋がる「島」はグリッド帯で別掲(DB スキャンでは sales 系のような大物がここに出る)
+
 ## 出力は 3 方向
 
 | 枠 | 意味 |

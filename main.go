@@ -35,6 +35,8 @@ func run() int {
 	yii1Dir := fs.String("yii1", "", "Yii 1.x アプリのルート(または protected/models)を静的に読む。DB 接続不要")
 	jsonOut := fs.Bool("json", false, "JSON で出力")
 	mermaid := fs.String("mermaid", "", "Mermaid 図をこのファイルへ書き出す")
+	svgOut := fs.String("svg", "", "図(SVG)をこのファイルへ機械生成する")
+	htmlOut := fs.String("html", "", "図と切断計画をまとめた自己完結 HTML をこのファイルへ書き出す")
 	hub := fs.Int("hub", 0, "hub 判定の次数閾値(0 = 自動: max(6, ノード数の 15%))")
 	showVersion := fs.Bool("version", false, "バージョン表示")
 	fs.Usage = func() {
@@ -102,17 +104,30 @@ func run() int {
 
 	a := Analyze(sc, *hub)
 
-	if *mermaid != "" {
-		f, err := os.Create(*mermaid)
+	writeFile := func(path string, write func(f *os.File)) bool {
+		if path == "" {
+			return true
+		}
+		f, err := os.Create(path)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, prog+":", err)
-			return 1
+			return false
 		}
-		WriteMermaid(f, a)
+		write(f)
 		if err := f.Close(); err != nil {
 			fmt.Fprintln(os.Stderr, prog+":", err)
-			return 1
+			return false
 		}
+		return true
+	}
+	if !writeFile(*mermaid, func(f *os.File) { WriteMermaid(f, a) }) {
+		return 1
+	}
+	if !writeFile(*svgOut, func(f *os.File) { WriteSVG(f, a) }) {
+		return 1
+	}
+	if !writeFile(*htmlOut, func(f *os.File) { WriteHTML(f, a) }) {
+		return 1
 	}
 
 	if *jsonOut {
