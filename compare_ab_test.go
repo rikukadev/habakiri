@@ -43,8 +43,8 @@ func TestSchemaABPhysicalFollowsFKCoverage(t *testing.T) {
 		if !reflect.DeepEqual(a.Common.Tables, b.Common.Tables) {
 			t.Fatalf("テーブル集合が違う:\n%v\n%v", a.Common.Tables, b.Common.Tables)
 		}
-		if na, nb := len(a.View(GraphPhysical).Scan.FKs), len(b.View(GraphPhysical).Scan.FKs); na != 1 || nb != 9 {
-			t.Fatalf("物理 FK は A=1 / B=9 のはず: %d / %d", na, nb)
+		if na, nb := len(a.View(GraphPhysical).Scan.FKs), len(b.View(GraphPhysical).Scan.FKs); na != 1 || nb != 10 {
+			t.Fatalf("物理 FK は A=1 / B=10 のはず: %d / %d", na, nb)
 		}
 	})
 
@@ -78,12 +78,9 @@ func TestSchemaABPhysicalFollowsFKCoverage(t *testing.T) {
 	t.Run("B の Physical は業務の塊ではなく整備済みの範囲を写す", func(t *testing.T) {
 		phys := CommunityViewOf("physical", b.View(GraphPhysical).Analysis)
 		logic := CommunityViewOf("logical", b.View(GraphLogical).Analysis)
-		// 宣言では customer と invoice は注文側。DB だけ読むと、purchase が hub で
-		// 外れた後に account への FK だけが残り、account 側に引き寄せられる
-		for _, tbl := range []string{"customer", "invoice"} {
-			if phys.Assign[tbl] == logic.Assign[tbl] {
-				t.Errorf("%s: physical と logical で同じ所属(%q)— フィクスチャが主張を示せていない", tbl, phys.Assign[tbl])
-			}
+		d := DiffCommunities(phys, logic)
+		if d.ARI == nil || *d.ARI >= 1 {
+			t.Fatalf("B の中で physical と logical の分割は一致しないはず: %v", d.ARI)
 		}
 		// 記事まわりは FK が無いので、Physical では「結合が弱い」のではなく見えていない
 		for _, tbl := range []string{"article", "comment", "attachment"} {
@@ -112,12 +109,38 @@ func TestSchemaABPhysicalFollowsFKCoverage(t *testing.T) {
 		if _, reason := weightOf(fk); reason != ReasonNotNull {
 			t.Errorf("B: 重みの理由は DB の NOT NULL: %s", reason)
 		}
-		// ORM に宣言の無い物理 FK(Physical Only)と、DB に無い宣言(Logical Only)
-		if fk := idxB["audit_log(account_id)→account"]; !fk.Enforced() || fk.Logical() {
-			t.Errorf("audit_log → account は Physical Only: %+v", fk.Evidences)
+	})
+
+	t.Run("Edge Diff: Physical Only / Logical Only / 判定不能が正しく分かれる", func(t *testing.T) {
+		class := func(ci *ComparisonInput, child, parent string) string {
+			ed := BuildComparison(ci).EdgeDiff
+			for _, r := range append(append([]EdgeDiffRow(nil), ed.Edges...), ed.HubEdges...) {
+				if r.ChildTable == child && r.ParentTable == parent {
+					return r.Class
+				}
+			}
+			return "(行なし)"
 		}
-		if fk := idxB["comment(article_id)→article"]; fk.Enforced() || !fk.Logical() {
-			t.Errorf("comment → article は Logical Only: %+v", fk.Evidences)
+		cases := []struct {
+			child, parent, inA, inB string
+		}{
+			// 宣言はあるが DB に FK が無い(記事まわりは A / B とも未整備)
+			{"comment", "article", EdgeLogicalOnly, EdgeLogicalOnly},
+			// B で FK を張った関係: A では Logical Only、B では一致
+			{"purchase", "customer", EdgeLogicalOnly, EdgeBoth},
+			// 両端にモデルがあるのに宣言が無い物理 FK(B にだけある)
+			{"payment", "customer", "(行なし)", EdgePhysicalOnly},
+			// audit_log にはモデルが無い。静的解析が見ていないテーブルについて
+			// 「宣言が無い」とは言えないので、Physical Only ではなく判定不能
+			{"audit_log", "account", "(行なし)", EdgeUndetermined},
+		}
+		for _, c := range cases {
+			if got := class(a, c.child, c.parent); got != c.inA {
+				t.Errorf("A: %s → %s = %s, want %s", c.child, c.parent, got, c.inA)
+			}
+			if got := class(b, c.child, c.parent); got != c.inB {
+				t.Errorf("B: %s → %s = %s, want %s", c.child, c.parent, got, c.inB)
+			}
 		}
 	})
 }
@@ -130,6 +153,8 @@ func TestCLICompareGraphs(t *testing.T) {
 		"■ グラフ比較(--compare-graphs)",
 		"hub = account, purchase",
 		"physical × logical: ARI",
+		"Physical Only(DB の制約はあるが ORM に宣言が無い",
+		"payment.customer_id → customer",
 		"(physical では孤立)",
 	} {
 		if !strings.Contains(out, want) {

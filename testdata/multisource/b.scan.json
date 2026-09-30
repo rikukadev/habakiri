@@ -60,6 +60,16 @@
       "all_not_null": true
     },
     {
+      "constraint": "payment_customer_id_fkey",
+      "child_table": "payment",
+      "child_columns": [
+        "customer_id"
+      ],
+      "parent_table": "customer",
+      "delete_rule": "NO ACTION",
+      "all_not_null": false
+    },
+    {
       "constraint": "payment_purchase_id_fkey",
       "child_table": "payment",
       "child_columns": [
