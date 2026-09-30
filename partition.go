@@ -302,6 +302,24 @@ func BuildPartition(a *Analysis) *Partition {
 		seenS[[2]string{ua, ub}] = true
 		g.addEdge(ua, ub, 1)
 	}
+	// 辺: 実測共起(FK なしの対のみ。重み = 2 × count/max — NOT NULL 級を上限に)
+	maxCooc := 0
+	for _, c := range a.Cooc {
+		if !c.HasFK && c.Count > maxCooc {
+			maxCooc = c.Count
+		}
+	}
+	for _, c := range a.Cooc {
+		if c.HasFK || maxCooc == 0 {
+			continue
+		}
+		ua, ub := resolveUnit(c.A), resolveUnit(c.B)
+		if ua == "" || ub == "" || ua == ub {
+			continue
+		}
+		g.addEdge(ua, ub, 2*float64(c.Count)/float64(maxCooc))
+	}
+
 	// 辺: hub 契約(二部射影の重み: 3 × FK本数 / hub次数)
 	for _, hc := range a.HubContracts {
 		if hubDeg[hc.Hub] == 0 {

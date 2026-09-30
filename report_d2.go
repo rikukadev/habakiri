@@ -48,6 +48,7 @@ func writeD2(w io.Writer, a *Analysis, cutLevel int) {
   bridge: {style: {stroke-width: 4}}
   suspectS: {style: {stroke: "#7a5fae"; stroke-dash: 3; font-color: "#7a5fae"}}
   suspectW: {style: {stroke: "#c4b5e0"; stroke-dash: 3; font-color: "#c4b5e0"}}
+  cooc: {style: {stroke: "#c98a4b"; font-color: "#c98a4b"; stroke-width: 2}}
 }`)
 
 	// 図に入れるのはグラフ(テーブル・FK・橋・疑い)だけ。統計・hub 一覧・
@@ -153,6 +154,18 @@ func writeD2(w io.Writer, a *Analysis, cutLevel int) {
 				p(`%s -> %s: "%s" {class: [%s]}`, from, to, label, cls)
 			}
 		}
+	}
+
+	// 実測共起(橙)。FK なしの対のみ = 宣言に現れない不変条件の候補。
+	for _, c := range a.Cooc {
+		if c.HasFK {
+			continue
+		}
+		pa, pb := path[c.A], path[c.B]
+		if pa == "" || pb == "" {
+			continue
+		}
+		p(`%s -- %s: "共起 %d" {class: [cooc]}`, pa, pb, c.Count)
 	}
 
 	// 宣言外の疑い(破線紫)。FK が既にある対・同一ノードは省く。

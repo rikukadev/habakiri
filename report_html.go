@@ -81,6 +81,22 @@ code { font-family:ui-monospace,Menlo,monospace; font-size:.85em; }
 		esc(a.Schema), a.TableCount, a.FKCount, len(a.Hubs), a.HubThreshold,
 		len(a.CascadeGroups), len(a.Bridges), len(a.Isolated))
 
+	if a.Partition != nil && len(a.Partition.Groups) > 1 {
+		partSVG := render(WriteSVGPartition)
+		p(`<h2>分割案の図 — グループ = コンテナ、跨ぐ ✂ = サービス間 API 面</h2>
+<figure>%s</figure>`, partSVG)
+		p(`<h2>分割案 — 大物 %d 個(Girvan–Newman、モジュラリティ Q=%.2f)</h2>
+<p class="sub">橋・宣言外の疑い[強]・hub 契約(FK 本数 / hub 次数で正規化)を重み付きグラフにし、
+辺媒介中心性の高い辺から外してモジュラリティ最大の分割を採用。小コミュニティは最強結合先へ編入。</p>
+<div class="tw"><table><tr><th>#</th><th>テーブル</th><th>所有 hub</th><th>ユニット</th></tr>`,
+			len(a.Partition.Groups), a.Partition.Modularity)
+		for i, gr := range a.Partition.Groups {
+			p(`<tr><td>S%d</td><td>%d</td><td><code>%s</code></td><td><code>%s</code></td></tr>`,
+				i+1, gr.Tables, esc(strings.Join(gr.Hubs, ", ")), esc(strings.Join(gr.Units, ", ")))
+		}
+		p(`</table></div>`)
+	}
+
 	p(`<h2>切る前</h2>
 <figure>%s<figcaption class="sub">現状の E-R 図(D2/dagre で機械生成)。箱 = テーブル(CASCADE 集約はメンバーを行で列挙、
 単独テーブルは FK 列を行で列挙)。実線矢印 = FK(子 → 親、ラベルは FK 列名)、<b>太線 ✂Ln = 橋(n = 切断レベル)</b>、
@@ -104,18 +120,18 @@ code { font-family:ui-monospace,Menlo,monospace; font-size:.85em; }
 		}
 	}
 
-	if a.Partition != nil && len(a.Partition.Groups) > 1 {
-		partSVG := render(WriteSVGPartition)
-		p(`<h2>分割案の図 — グループ = コンテナ、跨ぐ ✂ = サービス間 API 面</h2>
-<figure>%s</figure>`, partSVG)
-		p(`<h2>分割案 — 大物 %d 個(Girvan–Newman、モジュラリティ Q=%.2f)</h2>
-<p class="sub">橋・宣言外の疑い[強]・hub 契約(FK 本数 / hub 次数で正規化)を重み付きグラフにし、
-辺媒介中心性の高い辺から外してモジュラリティ最大の分割を採用。小コミュニティは最強結合先へ編入。</p>
-<div class="tw"><table><tr><th>#</th><th>テーブル</th><th>所有 hub</th><th>ユニット</th></tr>`,
-			len(a.Partition.Groups), a.Partition.Modularity)
-		for i, gr := range a.Partition.Groups {
-			p(`<tr><td>S%d</td><td>%d</td><td><code>%s</code></td><td><code>%s</code></td></tr>`,
-				i+1, gr.Tables, esc(strings.Join(gr.Hubs, ", ")), esc(strings.Join(gr.Units, ", ")))
+	if len(a.Cooc) > 0 {
+		p(`<h2>実測共起(--cooc)</h2>
+<p class="sub">同一トランザクションで一緒に書かれたテーブル対。FK なしの対は宣言に現れない結合の実測。</p>
+<div class="tw"><table><tr><th>対</th><th>回数</th><th>状態</th></tr>`)
+		for _, c := range a.Cooc {
+			mark := "FKなし — 宣言に現れない結合"
+			if c.Bridge {
+				mark = "橋 — 同一 tx の原子性に依存(レベル +1)"
+			} else if c.HasFK {
+				mark = "FKあり"
+			}
+			p(`<tr><td><code>%s × %s</code></td><td>%d</td><td>%s</td></tr>`, esc(c.A), esc(c.B), c.Count, esc(mark))
 		}
 		p(`</table></div>`)
 	}
