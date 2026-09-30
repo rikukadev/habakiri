@@ -1,6 +1,9 @@
 package main
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -145,12 +148,43 @@ func TestSchemaABPhysicalFollowsFKCoverage(t *testing.T) {
 	})
 }
 
+// Coverage: A の物理 FK 保有率が B より低いことが数値で出る。宣言側の数字は同じ。
+func TestSchemaABCoverage(t *testing.T) {
+	ca, cb := BuildComparison(loadAB(t, "a")).Coverage, BuildComparison(loadAB(t, "b")).Coverage
+	if ca.PhysicalFKRate == nil || cb.PhysicalFKRate == nil || *ca.PhysicalFKRate >= *cb.PhysicalFKRate {
+		t.Fatalf("A の保有率 < B の保有率 を期待: %v / %v", ca.PhysicalFKRate, cb.PhysicalFKRate)
+	}
+	if ca.TablesWithPhysicalFK != 2 || cb.TablesWithPhysicalFK != 9 || ca.DBTables != 15 || cb.DBTables != 15 {
+		t.Errorf("物理 FK に関わるテーブル: A=%d B=%d / DB テーブル: A=%d B=%d",
+			ca.TablesWithPhysicalFK, cb.TablesWithPhysicalFK, ca.DBTables, cb.DBTables)
+	}
+	if ca.Relations != cb.Relations || ca.RelationsDeclared != cb.RelationsDeclared || ca.LogicalTables != cb.LogicalTables {
+		t.Errorf("宣言側の数字が A と B で違う: %+v / %+v", ca.Coverage, cb.Coverage)
+	}
+	if ca.Both != 1 || cb.Both != 8 || cb.PhysicalOnly != 1 || cb.Undetermined != 1 {
+		t.Errorf("分類の件数: A both=%d / B both=%d physical_only=%d undetermined=%d",
+			ca.Both, cb.Both, cb.PhysicalOnly, cb.Undetermined)
+	}
+
+	// B: FK を張っていない記事側のグループにだけ「入力が薄い」旗が立つ
+	thin := map[string]bool{}
+	for _, g := range cb.Groups {
+		thin[g.Name] = g.Thin
+	}
+	if len(cb.Groups) != 2 || !thin["account 圏"] || thin["purchase 圏"] {
+		t.Errorf("B の旗: %+v", cb.Groups)
+	}
+}
+
 // CLI 経路: --compare-graphs は併用が前提。
 func TestCLICompareGraphs(t *testing.T) {
 	out := string(runCLI(t, "--schema-json", "testdata/multisource/b.scan.json",
 		"--yii1", "testdata/multisource", "--compare-graphs"))
 	for _, want := range []string{
 		"■ グラフ比較(--compare-graphs)",
+		"■ Observation Coverage",
+		"物理 FK に関わるテーブル   9(保有率 60%)",
+		"⚠ 入力が薄い",
 		"hub = account, purchase",
 		"physical × logical: ARI",
 		"Physical Only(DB の制約はあるが ORM に宣言が無い",
@@ -169,5 +203,75 @@ func TestCLICompareGraphsNeedsBothSources(t *testing.T) {
 	code := run("habakiri", []string{"--yii1", "testdata/multisource", "--compare-graphs"}, &stdout, &stderr)
 	if code != 2 || !strings.Contains(stderr.String(), "併用が前提") {
 		t.Errorf("片方だけの --compare-graphs は exit 2: got %d %s", code, stderr.String())
+	}
+}
+
+// 共起(Observed)付きの比較。宣言にも DB にも無い結合が Observed Only に出る。
+func TestCLICompareGraphsWithCooc(t *testing.T) {
+	args := []string{"--schema-json", "testdata/multisource/b.scan.json", "--yii1", "testdata/multisource",
+		"--compare-graphs", "--cooc", "testdata/multisource/cooc.txt"}
+	out := string(runCLI(t, args...))
+	for _, want := range []string{
+		"Observed Only(実行時に共起したが宣言が無い",
+		"article × product  [共起 ×3 npmi=0.42]",
+		// FK は無いが、実行時には一緒に書かれている(Logical Only + 共起)
+		"article_tag.article_id → article  [共起 ×2 npmi=0.32]",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("出力に %q が無い:\n%s", want, out)
+		}
+	}
+
+	// JSON は既存構造へのフィールド追加のみ(comparison が増えるだけ)
+	var got struct {
+		FKCount    int `json:"fk_count"`
+		Comparison struct {
+			Graphs   map[string]json.RawMessage `json:"graphs"`
+			EdgeDiff struct {
+				Counts EdgeDiffCounts `json:"counts"`
+			} `json:"edge_diff"`
+			CommunityDiff struct {
+				Pairs []CommunityDiff `json:"pairs"`
+			} `json:"community_diff"`
+		} `json:"comparison"`
+	}
+	if err := json.Unmarshal(runCLI(t, append(args, "--json")...), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.FKCount != 20 || len(got.Comparison.Graphs) != 3 || len(got.Comparison.CommunityDiff.Pairs) != 3 {
+		t.Errorf("comparison の形: fk=%d graphs=%d pairs=%d",
+			got.FKCount, len(got.Comparison.Graphs), len(got.Comparison.CommunityDiff.Pairs))
+	}
+	if c := got.Comparison.EdgeDiff.Counts; c.ObservedOnly != 2 || c.PhysicalOnly != 1 || c.LogicalOnly != 5 {
+		t.Errorf("edge_diff.counts: %+v", c)
+	}
+
+	// 比較を付けない JSON には comparison が出ない
+	plain := runCLI(t, "--schema-json", "testdata/multisource/b.scan.json", "--yii1", "testdata/multisource", "--json")
+	if strings.Contains(string(plain), `"comparison"`) {
+		t.Error("--compare-graphs 無しの JSON に comparison が出ている")
+	}
+}
+
+// --html の比較節。自己完結(外部参照・script なし)を保つこと。
+func TestCLICompareGraphsHTML(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "out.html")
+	runCLI(t, "--schema-json", "testdata/multisource/b.scan.json", "--yii1", "testdata/multisource",
+		"--compare-graphs", "--html", path)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(raw)
+	for _, want := range []string{"グラフ比較", "Edge Diff", "Community Diff", "payment.customer_id → customer"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("HTML に %q が無い", want)
+		}
+	}
+	// xmlns の URL は名前空間であって取得先ではないので、読みに行く属性だけを見る
+	for _, banned := range []string{"<script", `src="http`, `href="http`, "@import"} {
+		if strings.Contains(page, banned) {
+			t.Errorf("HTML に %q がある(自己完結・JS なしの方針に反する)", banned)
+		}
 	}
 }

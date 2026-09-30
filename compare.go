@@ -33,9 +33,16 @@ type CommunityComparison struct {
 	Pairs []CommunityDiff `json:"pairs"`
 }
 
+// CoverageReport は入力の充足度(全体 + combined の分割のグループごと)。
+type CoverageReport struct {
+	Coverage
+	Groups []GroupCoverage `json:"groups"`
+}
+
 // Comparison は比較モードの全結果(JSON の comparison)。
 type Comparison struct {
 	Common        CommonConditions        `json:"common"`
+	Coverage      CoverageReport          `json:"coverage"`
 	Graphs        map[string]GraphSummary `json:"graphs"`
 	EdgeDiff      EdgeDiff                `json:"edge_diff"`
 	CommunityDiff CommunityComparison     `json:"community_diff"`
@@ -87,6 +94,13 @@ func BuildComparison(ci *ComparisonInput) *Comparison {
 		hubNames = append(hubNames, h.Node)
 	}
 	c.EdgeDiff = DiffEdges(ci.Combined, hubNames)
+	// 旗は combined の分割に立てる。DB と宣言を合わせた形のうち、どの塊が
+	// 実は宣言(や共起)だけで支えられているかを見るため。
+	c.Coverage.Coverage = BuildCoverage(ci.Combined, c.EdgeDiff)
+	c.Coverage.Groups = GroupCoverages(ci.Combined, views[GraphCombined], c.Coverage.Coverage)
+	if c.Coverage.Groups == nil {
+		c.Coverage.Groups = []GroupCoverage{}
+	}
 	for _, p := range comparePairs {
 		c.CommunityDiff.Pairs = append(c.CommunityDiff.Pairs, DiffCommunities(views[p[0]], views[p[1]]))
 	}
@@ -109,6 +123,9 @@ func WriteComparisonText(w io.Writer, c *Comparison) {
 	p("  共通条件(combined から決定): hub = %s(次数閾値 %d)/ CASCADE 縮約 %d 群",
 		hubText, c.Common.HubThreshold, len(c.Common.CascadeGroups))
 	p("  ここに出る差分は乖離の候補。FK が少ない見方で辺や所属が無いのは「関係が無い」の確認ではない")
+	p("")
+
+	writeCoverageText(p, c.Coverage)
 	p("")
 
 	p("■ 見方ごとの分割")
@@ -152,6 +169,57 @@ func WriteComparisonText(w io.Writer, c *Comparison) {
 		}
 	}
 	p("")
+}
+
+func rateText(v *float64) string {
+	if v == nil {
+		return "—"
+	}
+	return fmt.Sprintf("%.0f%%", *v*100)
+}
+
+// thinText は旗の文言。結合が弱いとは言わない — 読み方の注意だけ。
+func thinText(g GroupCoverage) string {
+	switch {
+	case !g.Thin:
+		return ""
+	case g.ThinReason == ThinNotInDB:
+		return "⚠ 入力が薄い: このグループのテーブルは DB に無い(宣言だけで出来た塊)"
+	}
+	return "⚠ 入力が薄い: 物理 FK が全体より大幅に少ない — 結合が弱いのではなく、FK の整備状況を写している可能性"
+}
+
+func writeCoverageText(p func(string, ...any), cr CoverageReport) {
+	c := cr.Coverage
+	count := func(read bool, n int) string {
+		if !read {
+			return "読んでいない"
+		}
+		return fmt.Sprintf("%d", n)
+	}
+	p("■ Observation Coverage — 入力はどれだけ見えていたか(差分を読む前に)")
+	p("  DB のテーブル              %s", count(c.PhysicalRead, c.DBTables))
+	p("  物理 FK に関わるテーブル   %s(保有率 %s)", count(c.PhysicalRead, c.TablesWithPhysicalFK), rateText(c.PhysicalFKRate))
+	p("  ORM が解析したテーブル     %s", count(c.LogicalRead, c.LogicalTables))
+	p("  宣言された関係             %s 本(宣言 %d 件、両側からの重複 %d)", count(c.LogicalRead, c.Relations), c.RelationsDeclared, c.Duplicates)
+	p("  DB と宣言が一致            %d 本", c.Both)
+	p("  Logical Only / Physical Only / 判定不能   %d / %d / %d 本", c.LogicalOnly, c.PhysicalOnly, c.Undetermined)
+	if c.CoocRead {
+		p("  共起(Observed)           %d tx(観測期間はログに依る — 無いことの証明には使えない)/ Observed Only %d 対", c.CoocTx, c.ObservedOnly)
+	} else {
+		p("  共起(Observed)           読んでいない(--cooc 未指定)")
+	}
+	if len(cr.Groups) > 0 {
+		p("  分割案(combined)のグループごとの物理 FK 保有率:")
+		for _, g := range cr.Groups {
+			line := fmt.Sprintf("      %s: %d テーブル中 DB にあるもの %d、うち物理 FK あり %d(%s)",
+				g.Name, g.Tables, g.DBTables, g.WithPhysicalFK, rateText(g.PhysicalFKRate))
+			if t := thinText(g); t != "" {
+				line += "  " + t
+			}
+			p("%s", line)
+		}
+	}
 }
 
 // edgeClassNotes は分類の読み方。断定はしない(候補を並べるだけ)。
@@ -247,6 +315,40 @@ func WriteComparisonHTML(w io.Writer, c *Comparison) {
 <p class="sub">共通条件(combined から決定): hub = <code>%s</code>(次数閾値 %d)/ CASCADE 縮約 %d 群。
 ここに出る差分は乖離の候補。FK が少ない見方で辺や所属が無いのは「関係が無い」の確認ではない。</p>`,
 		esc(hubText), c.Common.HubThreshold, len(c.Common.CascadeGroups))
+
+	cv := c.Coverage.Coverage
+	count := func(read bool, n int) string {
+		if !read {
+			return "読んでいない"
+		}
+		return fmt.Sprintf("%d", n)
+	}
+	cooc := "読んでいない(--cooc 未指定)"
+	if cv.CoocRead {
+		cooc = fmt.Sprintf("%d tx / Observed Only %d 対", cv.CoocTx, cv.ObservedOnly)
+	}
+	p(`<h2>Observation Coverage — 入力はどれだけ見えていたか</h2>
+<p class="sub">差分を読む前に。物理 FK が少ない領域は「結合が弱い」のではなく「観測が薄い」だけかもしれない。</p>
+<div class="tw"><table>
+<tr><th>DB のテーブル</th><td>%s</td></tr>
+<tr><th>物理 FK に関わるテーブル</th><td>%s(保有率 %s)</td></tr>
+<tr><th>ORM が解析したテーブル</th><td>%s</td></tr>
+<tr><th>宣言された関係</th><td>%s 本(宣言 %d 件、両側からの重複 %d)</td></tr>
+<tr><th>DB と宣言が一致</th><td>%d 本</td></tr>
+<tr><th>Logical Only / Physical Only / 判定不能</th><td>%d / %d / %d 本</td></tr>
+<tr><th>共起(Observed)</th><td>%s</td></tr>
+</table></div>`,
+		count(cv.PhysicalRead, cv.DBTables), count(cv.PhysicalRead, cv.TablesWithPhysicalFK), rateText(cv.PhysicalFKRate),
+		count(cv.LogicalRead, cv.LogicalTables), count(cv.LogicalRead, cv.Relations), cv.RelationsDeclared, cv.Duplicates,
+		cv.Both, cv.LogicalOnly, cv.PhysicalOnly, cv.Undetermined, esc(cooc))
+	if len(c.Coverage.Groups) > 0 {
+		p(`<div class="tw"><table><tr><th>グループ(combined の分割)</th><th>テーブル</th><th>DB にある</th><th>物理 FK あり</th><th>保有率</th><th></th></tr>`)
+		for _, g := range c.Coverage.Groups {
+			p(`<tr><td>%s</td><td>%d</td><td>%d</td><td>%d</td><td>%s</td><td class="w3">%s</td></tr>`,
+				esc(g.Name), g.Tables, g.DBTables, g.WithPhysicalFK, rateText(g.PhysicalFKRate), esc(thinText(g)))
+		}
+		p(`</table></div>`)
+	}
 
 	p(`<div class="tw"><table><tr><th>見方</th><th>FK</th><th>Q</th><th>コミュニティ</th><th>孤立</th></tr>`)
 	for _, kind := range []GraphKind{GraphPhysical, GraphLogical, GraphCombined} {

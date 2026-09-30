@@ -1,0 +1,17 @@
+# 中立形式(1 行 1 トランザクション)。比較モードの Observed 列のテスト用。
+# purchase 系は一緒に書かれる(FK も宣言もある関係の実測)
+purchase, purchase_item, payment
+purchase, purchase_item, payment
+purchase, purchase_item
+purchase, shipment
+# 宣言にも DB にも無い結合: 記事を書くと product の在庫表示が更新される(生 SQL を想定)
+article, product
+article, product
+article, product
+# FK の無い記事まわりも、実行時には一緒に書かれている
+article, comment
+article, article_tag
+article, article_tag
+comment
+tag
+invoice
