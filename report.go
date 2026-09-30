@@ -29,6 +29,11 @@ type Analysis struct {
 	// Islands: hub 経由でしか外と繋がらない島(hub 除去後にエッジ 0 本)。
 	// 「もう hub との契約だけ整理すれば独立できる」塊で、孤立の次に自由度が高い。
 	Islands []IslandReport `json:"islands"`
+	// HubContracts: ユニット(ブロック/島)が shared kernel(hub)に払っている
+	// 契約。橋が無い大物同士(例: Mastodon の交流と認証)の分離コストはここに出る。
+	HubContracts []HubContract `json:"hub_contracts"`
+	// Partition: Girvan–Newman + モジュラリティ最大化による「大物数個」への分割案。
+	Partition *Partition `json:"partition,omitempty"`
 	Bridges       []BridgeReport      `json:"bridges"`          // 切断点
 	ThinSeams     []SeamReport        `json:"thinnest_seams"`   // 橋が無いときの候補
 	CrossFKs      []FK                `json:"cross_schema_fks"` // スキーマ跨ぎ(最優先で殲滅)
@@ -70,6 +75,18 @@ type EdgeReport struct {
 type IslandReport struct {
 	Name   string `json:"name"`
 	Tables int    `json:"tables"`
+}
+
+// HubContract はユニット(ブロック/島)× hub の契約 1 件。
+// Level は橋と同じ語彙: 1 = NULL可のみ(結果整合)/ 2 = NOT NULL あり(存在保証)。
+type HubContract struct {
+	Unit       string `json:"unit"`        // ユニット代表名(ブロックは辞書順先頭メンバー)
+	UnitTables int    `json:"unit_tables"` // ユニットが含む実テーブル数
+	Hub        string `json:"hub"`
+	ToHub      int    `json:"to_hub_fks"`   // unit → hub 方向(unit 側が子)
+	FromHub    int    `json:"from_hub_fks"` // hub → unit 方向(hub 側が子)
+	NotNull    int    `json:"not_null_fks"`
+	Level      int    `json:"level"`
 }
 
 // SeamReport は橋ではないが最も細い継ぎ目。
@@ -125,6 +142,11 @@ func Analyze(sc *ScanResult, hubThreshold int) *Analysis {
 		hubThreshold = AutoHubThreshold(len(nodeSet))
 	}
 	a.HubThreshold = hubThreshold
+	// hub 契約の計測のため、hub 除去で捨てられるエッジを先に確保する。
+	preHubEdges := make(map[Pair]*Edge, len(edges))
+	for p, e := range edges {
+		preHubEdges[p] = e
+	}
 	edges, a.Hubs = RemoveHubs(edges, hubThreshold)
 	edges, a.CascadeGroups = Contract(edges)
 
@@ -312,10 +334,79 @@ func Analyze(sc *ScanResult, hubThreshold int) *Analysis {
 		return a.Islands[i].Name < a.Islands[j].Name
 	})
 
+	// hub 契約: hub 除去前のエッジのうち片端が hub のものを、非 hub 側の
+	// ユニット(ブロック代表 or 島)へ集計する。橋が無い大物同士の分離コストは
+	// 橋ではなくここに現れる(Mastodon の交流×認証で実測)。
+	blockOfNode := BlockOf(a.Blocks)
+	unitOf := func(t string) (string, int) {
+		rep := t
+		if r, ok := memberRep[t]; ok {
+			rep = r
+		}
+		if bi, ok := blockOfNode[rep]; ok {
+			members := append([]string(nil), a.Blocks[bi]...)
+			sort.Strings(members)
+			n := 0
+			for _, m := range members {
+				n += tableCount(m)
+			}
+			return members[0], n
+		}
+		return rep, tableCount(rep)
+	}
+	type hcKey struct{ unit, hub string }
+	hcAgg := map[hcKey]*HubContract{}
+	for p, e := range preHubEdges {
+		aHub, bHub := hubSet[p.A], hubSet[p.B]
+		if aHub == bHub {
+			continue // hub 同士(kernel 内部)と非 hub 同士はここでは対象外
+		}
+		hub, other := p.A, p.B
+		if bHub {
+			hub, other = p.B, p.A
+		}
+		if isolatedSet[other] {
+			continue
+		}
+		unit, tables := unitOf(other)
+		k := hcKey{unit, hub}
+		hc, ok := hcAgg[k]
+		if !ok {
+			hc = &HubContract{Unit: unit, UnitTables: tables, Hub: hub, Level: 1}
+			hcAgg[k] = hc
+		}
+		for _, fk := range e.FKs {
+			if fk.ChildTable == hub {
+				hc.FromHub++
+			} else {
+				hc.ToHub++
+			}
+			if fk.AllNotNull {
+				hc.NotNull++
+				hc.Level = 2
+			}
+		}
+	}
+	for _, hc := range hcAgg {
+		a.HubContracts = append(a.HubContracts, *hc)
+	}
+	sort.Slice(a.HubContracts, func(i, j int) bool {
+		x, y := a.HubContracts[i], a.HubContracts[j]
+		if x.UnitTables != y.UnitTables {
+			return x.UnitTables > y.UnitTables
+		}
+		if x.Unit != y.Unit {
+			return x.Unit < y.Unit
+		}
+		return x.Hub < y.Hub
+	})
+
 	for _, e := range ThinnestSeams(edges, bridges, 5) {
 		a.ThinSeams = append(a.ThinSeams, SeamReport{
 			A: e.A, B: e.B, Weight: e.Weight, FKs: len(e.FKs)})
 	}
+
+	a.Partition = BuildPartition(a)
 
 	a.Notes = append(a.Notes,
 		"FK が無いことは無関係の証明ではない — アプリ層 JOIN・ポリモーフィック関連は静的スキャンでは見えない。クエリログ由来の共起で補うのは今後の拡張。",
@@ -374,6 +465,39 @@ func WriteText(w io.Writer, a *Analysis) {
 			} else {
 				p("  %s", is.Name)
 			}
+		}
+		p("")
+	}
+
+	if len(a.HubContracts) > 0 {
+		p("■ hub 契約 — ユニット(ブロック/島)が shared kernel に払っている値段")
+		p("  (橋の無い大物同士の分離コストはここに出る。L1 = 結果整合で済む / L2 = 存在保証が要る)")
+		for _, hc := range a.HubContracts {
+			unit := hc.Unit
+			if hc.UnitTables > 1 {
+				unit = fmt.Sprintf("%s (+%d)", hc.Unit, hc.UnitTables-1)
+			}
+			p("  %s ⇄ %s: →%d本 ←%d本 NOT NULL %d = L%d", unit, hc.Hub, hc.ToHub, hc.FromHub, hc.NotNull, hc.Level)
+		}
+		p("")
+	}
+
+	if a.Partition != nil && len(a.Partition.Groups) > 1 {
+		p("■ 分割案(Girvan–Newman + モジュラリティ Q=%.2f)— 大物 %d 個への分割",
+			a.Partition.Modularity, len(a.Partition.Groups))
+		for i, gr := range a.Partition.Groups {
+			hubs := ""
+			if len(gr.Hubs) > 0 {
+				hubs = " / 所有 hub: " + strings.Join(gr.Hubs, ", ")
+			}
+			units := gr.Units
+			more := ""
+			if len(units) > 8 {
+				more = fmt.Sprintf(" … 他 %d ユニット", len(units)-8)
+				units = units[:8]
+			}
+			p("  S%d(%d テーブル)%s", i+1, gr.Tables, hubs)
+			p("      %s%s", strings.Join(units, ", "), more)
 		}
 		p("")
 	}

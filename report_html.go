@@ -104,6 +104,37 @@ code { font-family:ui-monospace,Menlo,monospace; font-size:.85em; }
 		}
 	}
 
+	if a.Partition != nil && len(a.Partition.Groups) > 1 {
+		partSVG := render(WriteSVGPartition)
+		p(`<h2>分割案の図 — グループ = コンテナ、跨ぐ ✂ = サービス間 API 面</h2>
+<figure>%s</figure>`, partSVG)
+		p(`<h2>分割案 — 大物 %d 個(Girvan–Newman、モジュラリティ Q=%.2f)</h2>
+<p class="sub">橋・宣言外の疑い[強]・hub 契約(FK 本数 / hub 次数で正規化)を重み付きグラフにし、
+辺媒介中心性の高い辺から外してモジュラリティ最大の分割を採用。小コミュニティは最強結合先へ編入。</p>
+<div class="tw"><table><tr><th>#</th><th>テーブル</th><th>所有 hub</th><th>ユニット</th></tr>`,
+			len(a.Partition.Groups), a.Partition.Modularity)
+		for i, gr := range a.Partition.Groups {
+			p(`<tr><td>S%d</td><td>%d</td><td><code>%s</code></td><td><code>%s</code></td></tr>`,
+				i+1, gr.Tables, esc(strings.Join(gr.Hubs, ", ")), esc(strings.Join(gr.Units, ", ")))
+		}
+		p(`</table></div>`)
+	}
+
+	if len(a.HubContracts) > 0 {
+		p(`<h2>hub 契約 — ユニットが shared kernel に払っている値段</h2>
+<p class="sub">橋の無い大物同士の分離コストはここに出る。L1 = 結果整合で済む / L2 = 存在保証が要る。</p>
+<div class="tw"><table><tr><th>ユニット</th><th>hub</th><th>→hub</th><th>←hub</th><th>NOT NULL</th><th>契約</th></tr>`)
+		for _, hc := range a.HubContracts {
+			unit := hc.Unit
+			if hc.UnitTables > 1 {
+				unit = fmt.Sprintf("%s (+%d)", hc.Unit, hc.UnitTables-1)
+			}
+			p(`<tr><td><code>%s</code></td><td><code>%s</code></td><td>%d</td><td>%d</td><td>%d</td><td>L%d</td></tr>`,
+				esc(unit), esc(hc.Hub), hc.ToHub, hc.FromHub, hc.NotNull, hc.Level)
+		}
+		p(`</table></div>`)
+	}
+
 	if len(a.Bridges) > 0 {
 		p(`<h2>橋 = 切断点(%d 本)</h2><div class="tw"><table>
 <tr><th>橋</th><th>重み</th><th>分離後</th><th>FK</th><th>難易度</th></tr>`, len(a.Bridges))

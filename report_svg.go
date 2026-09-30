@@ -29,6 +29,13 @@ func WriteSVG(w io.Writer, a *Analysis) error {
 	return renderD2(w, script.String())
 }
 
+// WriteSVGPartition は分割案の図(グループ = コンテナ)を書き出す。
+func WriteSVGPartition(w io.Writer, a *Analysis) error {
+	var script bytes.Buffer
+	WriteD2PartitionView(&script, a)
+	return renderD2(w, script.String())
+}
+
 // WriteSVGLevel は「レベル L まで切った後」の図を書き出す。
 func WriteSVGLevel(w io.Writer, a *Analysis, level int) error {
 	var script bytes.Buffer
