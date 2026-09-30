@@ -11,11 +11,19 @@
 読み取り専用。information_schema しか見ない。v1 は MySQL 専用
 (Postgres は best-effort で後回し。追加時は pg_catalog を読むこと)。
 
+## インストール
+
+```console
+$ go install github.com/rikukadev/habakiri@latest
+```
+
 ## 使い方
 
 ```console
 $ habakiri --dsn "user:pass@tcp(127.0.0.1:3306)/mydb" [--hub N] [--json] [--mermaid out.mmd]
 ```
+
+DSN は環境変数 `HABAKIRI_DSN` でも渡せる(パスワードをシェル履歴に残さないため)。
 
 ## 何をしているか
 
