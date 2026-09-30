@@ -218,16 +218,3 @@ func nullLabel(fk FK, aware bool) string {
 	}
 	return "NULL可"
 }
-
-// sourceTags は FK の証拠ソースを重複なく並べる(出現順)。
-func sourceTags(fk FK) []string {
-	var out []string
-	seen := map[string]bool{}
-	for _, ev := range fk.Evidences {
-		if !seen[ev.Source] {
-			seen[ev.Source] = true
-			out = append(out, ev.Source)
-		}
-	}
-	return out
-}
