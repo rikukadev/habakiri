@@ -1,7 +1,7 @@
 <?php
 class Contact extends AppModel
 {
-    public function tableName() { return 'x2_contacts'; }
+    public function tableName() { return 'contacts'; }
     public function relations()
     {
         return array(

@@ -52,7 +52,6 @@ var (
 	reYiiConcatHead = regexp.MustCompile(`^\s*return\s+['"]([^'"]+)['"]\s*\.`)
 	reYiiReturnVar  = regexp.MustCompile(`\breturn\s+\$\w+\s*;`)
 	rePHPComment    = regexp.MustCompile(`(?s)/\*.*?\*/|//[^\n]*|#[^\n]*`)
-	reYiiRel        = regexp.MustCompile(`['"](\w+)['"]\s*=>\s*(?:array\s*\(|\[)\s*self::(BELONGS_TO|HAS_MANY|HAS_ONE|MANY_MANY)\s*,\s*['"](\w+)['"]\s*,\s*['"]([^'"]+)['"]`)
 	reYiiMM         = regexp.MustCompile(`^\s*([\w.{}]+)\s*\(\s*([\w]+)\s*,\s*([\w]+)\s*\)\s*$`)
 	reYiiCb         = regexp.MustCompile(`function\s+(beforeSave|afterSave|beforeDelete|afterDelete|beforeValidate|afterValidate|beforeFind|afterFind|afterConstruct|behaviors)\s*\(`)
 )
@@ -193,9 +192,18 @@ func yiiToScan(dir string, models map[string]*yiiModel, prefix string, dynamic m
 	// tableOf は相手モデルのテーブル名。見つからなければ ok=false —
 	// クラス名をテーブル名にすると、読めていないモジュールや拡張のモデルが
 	// 実在しないテーブル(User 等)への偽の関係になる。
+	// PHP のクラス名は大文字小文字を区別しない('defaultvalue' でも DefaultValue に
+	// 解決される)。完全一致が無く、大文字小文字を無視して一意に決まるときだけ引く。
+	folded := map[string][]string{}
+	for c := range models {
+		folded[strings.ToLower(c)] = append(folded[strings.ToLower(c)], c)
+	}
 	tableOf := func(class string) (string, bool) {
 		if m, ok := models[class]; ok {
 			return m.tableName, true
+		}
+		if cs := folded[strings.ToLower(class)]; len(cs) == 1 {
+			return models[cs[0]].tableName, true
 		}
 		return "", false
 	}
@@ -224,6 +232,13 @@ func yiiToScan(dir string, models map[string]*yiiModel, prefix string, dynamic m
 			Constraint: constraint, DeleteRule: "NO ACTION", Nullable: NullableUnknown}
 		key := child + "\x00" + parent + "\x00" + strings.Join(cols, ",")
 		if i, ok := seen[key]; ok {
+			// 同じ宣言を 2 回数えない(relations() を継承した子クラスは親の宣言を
+			// そのまま持つので、同じテーブル・同じ位置の証拠が重なる)
+			for _, e := range res.FKs[i].Evidences {
+				if e.Origin == ev.Origin {
+					return
+				}
+			}
 			res.FKs[i].Evidences = append(res.FKs[i].Evidences, ev)
 			return
 		}
@@ -460,8 +475,12 @@ type yiiDecl struct {
 type yiiDiscovery struct {
 	models  map[string]*yiiModel // テーブルを持つ具体的なモデル
 	dynamic map[string]string    // テーブル名を実行時に組み立てるモデル → 族の表記
-	dupes   []string
-	notes   []string
+	// relTotal / relSkipped: relations() の宣言の総数と、関係として読めなかった
+	// 宣言の理由別の件数(読めなかったものを 0 件に見せない)
+	relTotal   int
+	relSkipped map[string]int
+	dupes      []string
+	notes      []string
 }
 
 // yiiMethodBody は function name(...) { ... } の本体を返す。
@@ -486,7 +505,7 @@ func yiiMethodBody(src, name string) (string, bool) {
 //     (連結の先頭が読めれば「テーブル族」として注記)
 //   - relations() が静的に読めない(実行時に組み立てる)なら、黙って 0 本にせず注記
 func yiiDiscover(dir string, files []string, prefix string) (*yiiDiscovery, error) {
-	d := &yiiDiscovery{models: map[string]*yiiModel{}, dynamic: map[string]string{}}
+	d := &yiiDiscovery{models: map[string]*yiiModel{}, dynamic: map[string]string{}, relSkipped: map[string]int{}}
 	decls := map[string]*yiiDecl{}
 	var order []string
 	for _, f := range files {
@@ -562,11 +581,14 @@ func yiiDiscover(dir string, files []string, prefix string) (*yiiDiscovery, erro
 		}
 		if body, has := yiiMethodBody(decl.src, "relations"); has {
 			in.hasRels = true
-			for _, loc := range reYiiRel.FindAllStringSubmatchIndex(decl.src, -1) {
-				in.rels = append(in.rels, yiiRelation{
-					name: decl.src[loc[2]:loc[3]], kind: decl.src[loc[4]:loc[5]],
-					target: decl.src[loc[6]:loc[7]], fkSpec: decl.src[loc[8]:loc[9]],
-					line: strings.Count(decl.src[:loc[0]], "\n") + 1, file: decl.path})
+			rels, skipped := parseYiiRelations(decl.src, decl.path)
+			in.rels = rels
+			for why, n := range skipped {
+				d.relSkipped[why] += n
+			}
+			d.relTotal += len(rels)
+			for _, n := range skipped {
+				d.relTotal += n
 			}
 			// 読めないのは return $relations; のように変数を返す(実行時に組み立てる)
 			// ときだけ。空の配列・on で結合する関連・列の対応表は静的に書かれている
@@ -663,6 +685,26 @@ func yiiDiscover(dir string, files []string, prefix string) (*yiiDiscovery, erro
 			"[判定不能] relations() を静的に読めない(実行時に組み立てる)— このモデルの関連は 0 本に見えるが、無いことの確認ではない: %s",
 			strings.Join(parts, ", ")))
 	}
+	if skippedN := func() int {
+		n := 0
+		for _, v := range d.relSkipped {
+			n += v
+		}
+		return n
+	}(); skippedN > 0 {
+		var whys []string
+		for why := range d.relSkipped {
+			whys = append(whys, why)
+		}
+		sort.Strings(whys)
+		var parts []string
+		for _, why := range whys {
+			parts = append(parts, fmt.Sprintf("%s %d", why, d.relSkipped[why]))
+		}
+		d.notes = append(d.notes, fmt.Sprintf(
+			"yii1: relations() の宣言 %d 件中 %d 件を関係として読んだ。読めなかった %d 件(%s)は FK にしていない",
+			d.relTotal, d.relTotal-skippedN, skippedN, strings.Join(parts, " / ")))
+	}
 	if len(broken) > 0 {
 		sort.Strings(broken)
 		d.notes = append(d.notes, fmt.Sprintf(
@@ -674,3 +716,168 @@ func yiiDiscover(dir string, files []string, prefix string) (*yiiDiscovery, erro
 
 // stripPHPComments はコメントを除く(判定の邪魔になる NOTE 行など)。
 func stripPHPComments(src string) string { return rePHPComment.ReplaceAllString(src, "") }
+
+var (
+	// 宣言の先頭: 'name' => array(self::KIND,  /  'name' => [self::KIND,
+	reYiiRelHead = regexp.MustCompile(`['"](\w+)['"]\s*=>\s*(array\s*\(|\[)\s*self::(BELONGS_TO|HAS_MANY|HAS_ONE|MANY_MANY)\s*,\s*`)
+	// 相手: 'Class' / Class::class / \Ns\Class::class
+	reYiiRelTarget = regexp.MustCompile(`^(?:['"](\w+)['"]|\\?(?:\w+\\)*(\w+)::class)\s*,\s*`)
+	reYiiQuoted    = regexp.MustCompile(`^(?:'([^']*)'|"([^"]*)")`)
+	reYiiPair      = regexp.MustCompile(`['"](\w+)['"]\s*=>\s*['"](\w+)['"]`)
+	reYiiItem      = regexp.MustCompile(`['"](\w+)['"]`)
+	reYiiOnOpt     = regexp.MustCompile(`['"]on['"]\s*=>\s*(?:"([^"]*)"|'([^']*)')`)
+	reYiiOnEq      = regexp.MustCompile(`(\$?[\w>-]+)\.(\w+)\s*=\s*(\$?[\w>-]+)\.(\w+)`)
+)
+
+// 関係として読めなかった宣言の理由(注記に件数で出す)。
+const (
+	relSkipTarget = "相手を読めない"
+	relSkipOn     = "列を特定できない on 句"
+	relSkipFK     = "外部キーを読めない"
+)
+
+// maskPHPComments はコメントを空白に置き換える(改行は残すので行番号がずれない)。
+// コメントアウトした宣言を関係として読まないため。
+func maskPHPComments(src string) string {
+	return rePHPComment.ReplaceAllStringFunc(src, func(c string) string {
+		b := []byte(c)
+		for i := range b {
+			if b[i] != '\n' {
+				b[i] = ' '
+			}
+		}
+		return string(b)
+	})
+}
+
+// balanced は src[open] の ( または [ に対応する閉じ括弧までの中身を返す。
+// 文字列リテラルの中の括弧は数えない。
+func balanced(src string, open int) (string, bool) {
+	depth := 0
+	var quote byte
+	for i := open; i < len(src); i++ {
+		c := src[i]
+		switch {
+		case quote != 0:
+			switch c {
+			case '\\':
+				i++ // エスケープの次の 1 文字を飛ばす
+			case quote:
+				quote = 0
+			}
+		case c == '\'' || c == '"':
+			quote = c
+		case c == '(' || c == '[':
+			depth++
+		case c == ')' || c == ']':
+			depth--
+			if depth == 0 {
+				return src[open+1 : i], true
+			}
+		}
+	}
+	return "", false
+}
+
+// parseYiiRelations は relations() の宣言を読む。FK の書き方は 4 通り:
+//
+//	'post_id'                           列(カンマ区切りで複合)
+//	array('fk' => 'pk', ...) / [...]    列の対応。左側が子の列
+//	array('col1', 'col2')               列の並び
+//	''  + 'on' => "$alias.x = rel.y"    on 句から列を読む(読めなければ関係にしない)
+//
+// 子の列の向きは Yii1 の定義どおり: BELONGS_TO は自分のテーブルの列、
+// HAS_ONE / HAS_MANY は相手のテーブルの列。MANY_MANY は 'join(col1, col2)'。
+func parseYiiRelations(rawSrc, path string) ([]yiiRelation, map[string]int) {
+	src := maskPHPComments(rawSrc)
+	skipped := map[string]int{}
+	var rels []yiiRelation
+	for _, loc := range reYiiRelHead.FindAllStringSubmatchIndex(src, -1) {
+		name, kind := src[loc[2]:loc[3]], src[loc[6]:loc[7]]
+		body, ok := balanced(src, loc[4])
+		if !ok {
+			skipped[relSkipFK]++
+			continue
+		}
+		// body は "self::KIND, target, fk, ..."。先頭の self::KIND, を飛ばす
+		rest := src[loc[1]:]
+		if end := loc[4] + 1 + len(body); end > loc[1] {
+			rest = src[loc[1]:end]
+		}
+		tm := reYiiRelTarget.FindStringSubmatch(rest)
+		if tm == nil {
+			skipped[relSkipTarget]++
+			continue
+		}
+		target := tm[1]
+		if target == "" {
+			target = tm[2]
+		}
+		fkPart := strings.TrimSpace(rest[len(tm[0]):])
+		rel := yiiRelation{name: name, kind: kind, target: target,
+			line: strings.Count(src[:loc[0]], "\n") + 1, file: path}
+
+		var cols []string
+		switch {
+		case reYiiQuoted.MatchString(fkPart):
+			q := reYiiQuoted.FindStringSubmatch(fkPart)
+			spec := q[1] + q[2]
+			if strings.TrimSpace(spec) != "" {
+				rel.fkSpec = spec
+				rels = append(rels, rel)
+				continue
+			}
+			// 空の FK: on 句で結んでいる
+			on := reYiiOnOpt.FindStringSubmatch(fkPart)
+			if on == nil {
+				skipped[relSkipOn]++
+				continue
+			}
+			eq := reYiiOnEq.FindStringSubmatch(on[1] + on[2])
+			if eq == nil {
+				skipped[relSkipOn]++
+				continue
+			}
+			// 相手側の別名は関連名。もう片方が自分側($alias / t / $this->...)
+			ownCol, relCol := "", ""
+			switch {
+			case eq[3] == name:
+				ownCol, relCol = eq[2], eq[4]
+			case eq[1] == name:
+				ownCol, relCol = eq[4], eq[2]
+			}
+			if ownCol == "" {
+				skipped[relSkipOn]++
+				continue
+			}
+			if kind == "BELONGS_TO" {
+				cols = []string{ownCol}
+			} else {
+				cols = []string{relCol}
+			}
+		case strings.HasPrefix(fkPart, "array") || strings.HasPrefix(fkPart, "["):
+			open := strings.IndexAny(fkPart, "([")
+			inner, ok := balanced(fkPart, open)
+			if !ok {
+				skipped[relSkipFK]++
+				continue
+			}
+			if pairs := reYiiPair.FindAllStringSubmatch(inner, -1); len(pairs) > 0 {
+				for _, p := range pairs {
+					cols = append(cols, p[1]) // 'fk' => 'pk' の左側が子の列
+				}
+			} else {
+				for _, it := range reYiiItem.FindAllStringSubmatch(inner, -1) {
+					cols = append(cols, it[1])
+				}
+			}
+		}
+		if len(cols) == 0 {
+			skipped[relSkipFK]++
+			continue
+		}
+		rel.fkSpec = strings.Join(cols, ",")
+		rels = append(rels, rel)
+	}
+	return rels, skipped
+}

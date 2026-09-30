@@ -1,5 +1,5 @@
 <?php
-// 関連をメタデータから実行時に組み立てる基底(X2CRM の X2Model 型)
+// 関連をメタデータから実行時に組み立てる基底
 abstract class AppModel extends AppActiveRecord
 {
     public function relations()
