@@ -1,0 +1,32 @@
+{
+  "schema": "blog",
+  "dialect": "mysql",
+  "tables": [
+    "attachment",
+    "audit_log",
+    "category",
+    "comment",
+    "post",
+    "post_category",
+    "tbl_user"
+  ],
+  "fks": [
+    {
+      "constraint": "fk_audit_user",
+      "child_table": "audit_log",
+      "child_columns": ["user_id"],
+      "parent_table": "tbl_user",
+      "delete_rule": "NO ACTION",
+      "all_not_null": false
+    },
+    {
+      "constraint": "fk_comment_post",
+      "child_table": "comment",
+      "child_columns": ["post_id"],
+      "parent_table": "post",
+      "delete_rule": "CASCADE",
+      "all_not_null": true
+    }
+  ],
+  "cross_schema_fks": null
+}

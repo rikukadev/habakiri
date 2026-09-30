@@ -326,8 +326,7 @@ func yiiToScan(dir string, models map[string]*yiiModel) *ScanResult {
 		}
 	}
 
-	res.Notes = append(res.Notes,
-		"yii1 ソース: relations() に必須性/カスケードの宣言が無いため重みは一律 1。DB スキャン(--dsn)との併用を推奨")
+	res.Notes = append(res.Notes, yii1WeightNote)
 
 	for t := range tables {
 		res.Tables = append(res.Tables, t)

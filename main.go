@@ -67,9 +67,10 @@ func run(prog string, args []string, stdout, stderr io.Writer) int {
   %s --dsn "postgres://user:pass@127.0.0.1:5432/mydb" ...
   %s --rails /path/to/railsapp    # ActiveRecord の宣言を静的に読む(DB 不要)
   %s --yii1  /path/to/yii1app     # Yii1 の relations() を静的に読む(DB 不要)
+  %s --dsn ... --yii1 /path/to/app  # 併用: DB の FK と宣言を合流(同じ関係は 1 本、証拠が 2 件)
 
-読み取り専用。MySQL は information_schema、Postgres は pg_catalog しか見ない。
-`, prog, prog, prog, prog, prog)
+分析は読み取り専用。MySQL は information_schema、Postgres は pg_catalog しか見ない。
+`, prog, prog, prog, prog, prog, prog)
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -79,31 +80,29 @@ func run(prog string, args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintln(stdout, prog, version)
 		return 0
 	}
-	sources := 0
-	for _, s := range []string{*dsn, *schemaJSON, *railsDir, *yii1Dir} {
-		if s != "" {
-			sources++
-		}
+	// ソースは 2 系統。DB(Physical)と静的ソース(Logical)は 1 つずつ併用でき、
+	// その場合は証拠を合流させる(merge.go)。同じ系統の中では 1 つだけ。
+	if *dsn != "" && *schemaJSON != "" {
+		errln(prog + ": --dsn と --schema-json はどちらか 1 つ")
+		return 2
 	}
-	if sources != 1 {
-		if sources > 1 {
-			errln(prog+": --dsn / --schema-json / --rails / --yii1 はどれか 1 つだけ")
-		} else {
-			fs.Usage()
-		}
+	if *railsDir != "" && *yii1Dir != "" {
+		errln(prog + ": --rails と --yii1 はどちらか 1 つ")
+		return 2
+	}
+	hasPhysical := *dsn != "" || *schemaJSON != ""
+	hasLogical := *railsDir != "" || *yii1Dir != ""
+	if !hasPhysical && !hasLogical {
+		fs.Usage()
 		return 2
 	}
 
-	var sc *ScanResult
+	var phys, logic *ScanResult
 	var err error
 	switch {
-	case *railsDir != "":
-		sc, err = ScanRails(*railsDir)
-	case *yii1Dir != "":
-		sc, err = ScanYii1(*yii1Dir)
 	case *schemaJSON != "":
-		sc, err = LoadSchemaJSON(*schemaJSON)
-	default:
+		phys, err = LoadSchemaJSON(*schemaJSON)
+	case *dsn != "":
 		// DSN のスキームでドライバを判別する。postgres:// / postgresql:// 以外は
 		// go-sql-driver の DSN 形式とみなす(MySQL に URL スキームは無い)。
 		driver, scan := "mysql", Scan
@@ -117,17 +116,40 @@ func run(prog string, args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		defer func() { _ = db.Close() }()
-		sc, err = scan(db)
+		phys, err = scan(db)
+	}
+	if err != nil {
+		errln(prog+":", err)
+		return 1
+	}
+	switch {
+	case *railsDir != "":
+		logic, err = ScanRails(*railsDir)
+	case *yii1Dir != "":
+		logic, err = ScanYii1(*yii1Dir)
 	}
 	if err != nil {
 		errln(prog+":", err)
 		return 1
 	}
 	if *dumpSchema != "" {
-		if err := DumpSchemaJSON(*dumpSchema, sc); err != nil {
+		if phys == nil {
+			errln(prog + ": --dump-schema は DB スキャン(--dsn)の結果を書き出す。静的ソースだけでは使えない")
+			return 2
+		}
+		if err := DumpSchemaJSON(*dumpSchema, phys); err != nil {
 			errln(prog+":", err)
 			return 1
 		}
+	}
+	var sc *ScanResult
+	switch {
+	case phys != nil && logic != nil:
+		sc = MergeScans(phys, logic)
+	case phys != nil:
+		sc = phys
+	default:
+		sc = logic
 	}
 	if *coocFile != "" {
 		cooc, err := LoadCooc(*coocFile)
@@ -165,7 +187,7 @@ func run(prog string, args []string, stdout, stderr io.Writer) int {
 		tChurn := map[string]int{}
 		if *churnDir != "" {
 			if len(sc.FileTables) == 0 {
-				errln(prog+": --churn は静的ソース(--rails/--yii1)と併用してください(ファイル→テーブル対応が要る)")
+				errln(prog + ": --churn は静的ソース(--rails/--yii1)と併用してください(ファイル→テーブル対応が要る)")
 				return 2
 			}
 			fc, err := LoadChurn(*churnDir)
