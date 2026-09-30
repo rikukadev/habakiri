@@ -45,6 +45,7 @@ type BridgeReport struct {
 	SideBSize  int     `json:"side_b_size"`
 	FKs        []FK    `json:"fks"`
 	Difficulty string  `json:"difficulty"` // 易 / 中
+	CutLevel   int     `json:"cut_level"`  // EdgeReport.CutLevel と同じ定義
 }
 
 // EdgeReport は縮約後グラフの 1 エッジ(橋かどうかの印付き)。
@@ -57,7 +58,12 @@ type EdgeReport struct {
 	MaxWeight float64 `json:"max_weight"`
 	FKCount   int     `json:"fk_count"`
 	Bridge    bool    `json:"bridge"`
-	FKs       []FK    `json:"fks"` // 図のラベル(列名・向き)と外部消費用
+	// CutLevel: 橋の切断レベル(橋のみ、それ以外 0)。
+	//   1 = NULL可のみ — 結果整合・非同期だけで切れる
+	//   2 = NOT NULL あり — 存在保証 API かマスタ複製が要る
+	//   3 = 上記 + 宣言外の疑い[強]が同じ対に張っている — FK が示すより高くつく
+	CutLevel int  `json:"cut_level,omitempty"`
+	FKs      []FK `json:"fks"` // 図のラベル(列名・向き)と外部消費用
 }
 
 // IslandReport は hub 経由のみで繋がる島 1 つ(CASCADE 集約なら Tables > 1)。
@@ -141,6 +147,49 @@ func Analyze(sc *ScanResult, hubThreshold int) *Analysis {
 	for _, bp := range bridges {
 		bridgeSet[bp] = true
 	}
+
+	// 橋の切断レベル。1 = NULL可のみ(結果整合で切れる・既定で切る)、
+	// 2 = NOT NULL あり(存在保証 API かマスタ複製 — 実務では稀)、
+	// 3 = さらに宣言外の疑い[強]が同じ対に張っている(FK が示すより高い)。
+	repOf := map[string]string{}
+	for root, ms := range a.CascadeGroups {
+		for _, m := range ms {
+			repOf[m] = root
+		}
+	}
+	nodeRep := func(t string) string {
+		if r, ok := repOf[t]; ok {
+			return r
+		}
+		return t
+	}
+	strongSuspect := map[Pair]bool{}
+	for _, s := range a.Suspects {
+		if !s.Strong {
+			continue
+		}
+		x, y := nodeRep(s.FromTable), nodeRep(s.ToTable)
+		if x == y {
+			continue
+		}
+		if x > y {
+			x, y = y, x
+		}
+		strongSuspect[Pair{A: x, B: y}] = true
+	}
+	cutLevel := func(p Pair, e *Edge) int {
+		lv := 1
+		for _, fk := range e.FKs {
+			if fk.AllNotNull {
+				lv = 2
+				break
+			}
+		}
+		if strongSuspect[p] && lv < 3 {
+			lv++
+		}
+		return lv
+	}
 	// Contract の再束ねで FK の並びが map 順に揺れるので、ここで固定する
 	// (--d2 / --svg のバイト決定性はこの順序に依存する)。
 	sortFKs := func(fks []FK) []FK {
@@ -163,9 +212,13 @@ func Analyze(sc *ScanResult, hubThreshold int) *Analysis {
 				maxW = w
 			}
 		}
+		lv := 0
+		if bridgeSet[p] {
+			lv = cutLevel(p, e)
+		}
 		a.Edges = append(a.Edges, EdgeReport{
 			A: p.A, B: p.B, Weight: e.Weight, MaxWeight: maxW,
-			FKCount: len(e.FKs), Bridge: bridgeSet[p], FKs: sortFKs(e.FKs)})
+			FKCount: len(e.FKs), Bridge: bridgeSet[p], CutLevel: lv, FKs: sortFKs(e.FKs)})
 	}
 	sort.Slice(a.Edges, func(i, j int) bool {
 		if a.Edges[i].A != a.Edges[j].A {
@@ -192,7 +245,8 @@ func Analyze(sc *ScanResult, hubThreshold int) *Analysis {
 
 	for _, bp := range bridges {
 		e := edges[bp]
-		br := BridgeReport{A: bp.A, B: bp.B, Weight: e.Weight, FKs: sortFKs(e.FKs)}
+		br := BridgeReport{A: bp.A, B: bp.B, Weight: e.Weight, FKs: sortFKs(e.FKs),
+			CutLevel: cutLevel(bp, e)}
 		// 橋を切った後、両端は別ブロックに落ちる…のではなく、橋除去後の
 		// ブロック表で両端のブロックサイズを引く(橋はブロック間の辺)。
 		br.SideASize = blockTables(blockOf[bp.A])
@@ -327,7 +381,7 @@ func WriteText(w io.Writer, a *Analysis) {
 	if len(a.Bridges) > 0 {
 		p("■ 橋 = 切断点(%d 本)— 1 本切るだけで塊が分離する", len(a.Bridges))
 		for _, b := range a.Bridges {
-			p("  %s ×— %s   重み %.0f   分離後 %d ↔ %d テーブル", b.A, b.B, b.Weight, b.SideASize, b.SideBSize)
+			p("  %s ×— %s   レベル %d   重み %.0f   分離後 %d ↔ %d テーブル", b.A, b.B, b.CutLevel, b.Weight, b.SideASize, b.SideBSize)
 			for _, fk := range b.FKs {
 				null := "NULL可"
 				if fk.AllNotNull {

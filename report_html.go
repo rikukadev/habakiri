@@ -13,14 +13,30 @@ import (
 
 // WriteHTML はレポートページを書き出す。
 func WriteHTML(w io.Writer, a *Analysis) {
-	var svg, svgCut bytes.Buffer
-	if err := WriteSVG(&svg, a); err != nil {
-		svg.Reset()
-		svg.WriteString("<p>図の生成に失敗: " + html.EscapeString(err.Error()) + "</p>")
+	render := func(f func(io.Writer, *Analysis) error) string {
+		var buf bytes.Buffer
+		if err := f(&buf, a); err != nil {
+			return "<p>図の生成に失敗: " + html.EscapeString(err.Error()) + "</p>"
+		}
+		return buf.String()
 	}
-	if err := WriteSVGCut(&svgCut, a); err != nil {
-		svgCut.Reset()
-		svgCut.WriteString("<p>図の生成に失敗: " + html.EscapeString(err.Error()) + "</p>")
+	svg := render(WriteSVG)
+
+	// 存在する切断レベルだけ図を作る(レベル 1 が主役。2/3 は折りたたみ)。
+	levelExists := map[int]bool{}
+	maxLevel := 0
+	for _, b := range a.Bridges {
+		levelExists[b.CutLevel] = true
+		if b.CutLevel > maxLevel {
+			maxLevel = b.CutLevel
+		}
+	}
+	levelSVG := map[int]string{}
+	for lv := 1; lv <= maxLevel; lv++ {
+		if levelExists[lv] {
+			l := lv
+			levelSVG[lv] = render(func(w io.Writer, a *Analysis) error { return WriteSVGLevel(w, a, l) })
+		}
 	}
 
 	p := func(format string, args ...any) { _, _ = fmt.Fprintf(w, format+"\n", args...) }
@@ -67,12 +83,26 @@ code { font-family:ui-monospace,Menlo,monospace; font-size:.85em; }
 
 	p(`<h2>切る前</h2>
 <figure>%s<figcaption class="sub">現状の E-R 図(D2/dagre で機械生成)。箱 = テーブル(CASCADE 集約はメンバーを行で列挙、
-単独テーブルは FK 列を行で列挙)。実線矢印 = FK(子 → 親、ラベルは FK 列名)、<b>太線 ✂ = 橋(切ると良い場所)</b>、
-破線紫 = 宣言外の疑い。色 = 重み(グレー NULL可 / 青 NOT NULL / 朱 CASCADE 級)。</figcaption></figure>`, svg.String())
+単独テーブルは FK 列を行で列挙)。実線矢印 = FK(子 → 親、ラベルは FK 列名)、<b>太線 ✂Ln = 橋(n = 切断レベル)</b>、
+破線紫 = 宣言外の疑い。色 = 重み(グレー NULL可 / 青 NOT NULL / 朱 CASCADE 級)。</figcaption></figure>`, svg)
 
-	p(`<h2>切った後</h2>
-<figure>%s<figcaption class="sub">橋をすべて切った世界。離れて浮かぶ塊 = 独立できる単位(ブロック)。
-紫の破線が残っていれば、それが切断後もアプリ層に残る結合(API 化の対象)。</figcaption></figure>`, svgCut.String())
+	captions := map[int]string{
+		1: "レベル 1: 結果整合・非同期だけで切れる橋(NULL可のみ)を切った世界。<b>サービス切り出しはここで足りることが多い。</b>残る ✂ はより高いレベルの橋。",
+		2: "レベル 2: 存在保証 API かマスタ複製を払って NOT NULL の橋まで切った世界(実務では稀)。",
+		3: "レベル 3: 宣言外の疑い[強]持ちの橋まで含む最大分解(参考値 — 通常やらない)。",
+	}
+	for lv := 1; lv <= maxLevel; lv++ {
+		body, ok := levelSVG[lv]
+		if !ok {
+			continue
+		}
+		fig := fmt.Sprintf(`<figure>%s<figcaption class="sub">%s</figcaption></figure>`, body, captions[lv])
+		if lv == 1 {
+			p(`<h2>切った後 — レベル 1(既定)</h2>%s`, fig)
+		} else {
+			p(`<details><summary>切った後 — レベル %d を開く</summary>%s</details>`, lv, fig)
+		}
+	}
 
 	if len(a.Bridges) > 0 {
 		p(`<h2>橋 = 切断点(%d 本)</h2><div class="tw"><table>

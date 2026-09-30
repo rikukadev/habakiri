@@ -24,16 +24,19 @@ func d2Quote(s string) string {
 
 // WriteD2 は「切る前」のスクリプト(橋を ✂ で強調)を書き出す。
 func WriteD2(w io.Writer, a *Analysis) {
-	writeD2(w, a, true)
+	writeD2(w, a, 0)
 }
 
-// WriteD2Cut は「切った後」のスクリプト(橋を除去した世界)を書き出す。
-// ブロック = 橋除去後の成分なので、橋を消せば各ブロックが独立した島として並ぶ。
-func WriteD2Cut(w io.Writer, a *Analysis) {
-	writeD2(w, a, false)
+// WriteD2Level は「レベル L まで切った後」のスクリプトを書き出す。
+// レベル L 以下の橋は除去され、それより高い橋は ✂ 付きで残る。
+//   L=1: 結果整合だけで切れる橋のみ(サービス切り出しはこれで足りることが多い)
+//   L=2: 存在保証 API / マスタ複製込み(実務では稀)
+//   L=3: 最大分解(参考値)
+func WriteD2Level(w io.Writer, a *Analysis, level int) {
+	writeD2(w, a, level)
 }
 
-func writeD2(w io.Writer, a *Analysis, includeBridges bool) {
+func writeD2(w io.Writer, a *Analysis, cutLevel int) {
 	p := func(format string, args ...any) { _, _ = fmt.Fprintf(w, format+"\n", args...) }
 
 	p(`# habakiri — %s(%d テーブル / %d FK / 橋 %d 本)`, a.Schema, a.TableCount, a.FKCount, len(a.Bridges))
@@ -142,10 +145,10 @@ func writeD2(w io.Writer, a *Analysis, includeBridges bool) {
 			cls := weightClass(fkWeight(fk))
 			label := strings.Join(fk.ChildCols, ",")
 			switch {
-			case e.Bridge && !includeBridges:
-				// 切った後の世界: 橋は存在しない
+			case e.Bridge && e.CutLevel <= cutLevel:
+				// このレベルでは切断済み — 橋は存在しない
 			case e.Bridge:
-				p(`%s -> %s: "✂ %s" {class: [%s; bridge]}`, from, to, label, cls)
+				p(`%s -> %s: "✂L%d %s" {class: [%s; bridge]}`, from, to, e.CutLevel, label, cls)
 			default:
 				p(`%s -> %s: "%s" {class: [%s]}`, from, to, label, cls)
 			}
@@ -176,11 +179,12 @@ func writeD2(w io.Writer, a *Analysis, includeBridges bool) {
 			continue
 		}
 		seenSus[key] = true
-		cls, lbl := "suspectW", "疑い[弱]"
-		if s.Strong {
-			cls, lbl = "suspectS", "疑い[強]"
+		// [弱](メソッド参照)は図では省く — ノイズが利得を上回る(実測)。
+		// [強]もラベルは付けない: 線種(破線紫)と HTML の注で十分。
+		if !s.Strong {
+			continue
 		}
-		p(`%s -- %s: "%s" {class: [%s]}`, path[fn], path[tn], lbl, cls)
+		p(`%s -- %s: {class: [suspectS]}`, path[fn], path[tn])
 	}
 
 }
