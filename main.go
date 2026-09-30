@@ -36,6 +36,7 @@ func run() int {
 	jsonOut := fs.Bool("json", false, "JSON で出力")
 	mermaid := fs.String("mermaid", "", "Mermaid 図をこのファイルへ書き出す")
 	svgOut := fs.String("svg", "", "図(SVG)をこのファイルへ機械生成する")
+	d2Out := fs.String("d2", "", "D2 スクリプトをこのファイルへ書き出す(d2 out.d2 out.svg で描画)")
 	htmlOut := fs.String("html", "", "図と切断計画をまとめた自己完結 HTML をこのファイルへ書き出す")
 	hub := fs.Int("hub", 0, "hub 判定の次数閾値(0 = 自動: max(6, ノード数の 15%))")
 	showVersion := fs.Bool("version", false, "バージョン表示")
@@ -123,7 +124,22 @@ func run() int {
 	if !writeFile(*mermaid, func(f *os.File) { WriteMermaid(f, a) }) {
 		return 1
 	}
-	if !writeFile(*svgOut, func(f *os.File) { WriteSVG(f, a) }) {
+	if *svgOut != "" {
+		f, err := os.Create(*svgOut)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, prog+":", err)
+			return 1
+		}
+		if err := WriteSVG(f, a); err != nil {
+			fmt.Fprintln(os.Stderr, prog+":", err)
+			return 1
+		}
+		if err := f.Close(); err != nil {
+			fmt.Fprintln(os.Stderr, prog+":", err)
+			return 1
+		}
+	}
+	if !writeFile(*d2Out, func(f *os.File) { WriteD2(f, a) }) {
 		return 1
 	}
 	if !writeFile(*htmlOut, func(f *os.File) { WriteHTML(f, a) }) {

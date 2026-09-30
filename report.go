@@ -57,6 +57,7 @@ type EdgeReport struct {
 	MaxWeight float64 `json:"max_weight"`
 	FKCount   int     `json:"fk_count"`
 	Bridge    bool    `json:"bridge"`
+	FKs       []FK    `json:"fks"` // 図のラベル(列名・向き)と外部消費用
 }
 
 // IslandReport は hub 経由のみで繋がる島 1 つ(CASCADE 集約なら Tables > 1)。
@@ -140,6 +141,21 @@ func Analyze(sc *ScanResult, hubThreshold int) *Analysis {
 	for _, bp := range bridges {
 		bridgeSet[bp] = true
 	}
+	// Contract の再束ねで FK の並びが map 順に揺れるので、ここで固定する
+	// (--d2 / --svg のバイト決定性はこの順序に依存する)。
+	sortFKs := func(fks []FK) []FK {
+		out := append([]FK(nil), fks...)
+		sort.Slice(out, func(i, j int) bool {
+			if out[i].ChildTable != out[j].ChildTable {
+				return out[i].ChildTable < out[j].ChildTable
+			}
+			if ci, cj := strings.Join(out[i].ChildCols, ","), strings.Join(out[j].ChildCols, ","); ci != cj {
+				return ci < cj
+			}
+			return out[i].Constraint < out[j].Constraint
+		})
+		return out
+	}
 	for p, e := range edges {
 		maxW := 0.0
 		for _, fk := range e.FKs {
@@ -149,7 +165,7 @@ func Analyze(sc *ScanResult, hubThreshold int) *Analysis {
 		}
 		a.Edges = append(a.Edges, EdgeReport{
 			A: p.A, B: p.B, Weight: e.Weight, MaxWeight: maxW,
-			FKCount: len(e.FKs), Bridge: bridgeSet[p]})
+			FKCount: len(e.FKs), Bridge: bridgeSet[p], FKs: sortFKs(e.FKs)})
 	}
 	sort.Slice(a.Edges, func(i, j int) bool {
 		if a.Edges[i].A != a.Edges[j].A {
@@ -176,7 +192,7 @@ func Analyze(sc *ScanResult, hubThreshold int) *Analysis {
 
 	for _, bp := range bridges {
 		e := edges[bp]
-		br := BridgeReport{A: bp.A, B: bp.B, Weight: e.Weight, FKs: e.FKs}
+		br := BridgeReport{A: bp.A, B: bp.B, Weight: e.Weight, FKs: sortFKs(e.FKs)}
 		// 橋を切った後、両端は別ブロックに落ちる…のではなく、橋除去後の
 		// ブロック表で両端のブロックサイズを引く(橋はブロック間の辺)。
 		br.SideASize = blockTables(blockOf[bp.A])
