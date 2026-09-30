@@ -38,7 +38,7 @@ func ScanPostgres(db *sql.DB) (*ScanResult, error) {
 		return nil, fmt.Errorf("current_schema() が空です(DSN の search_path を確認)")
 	}
 
-	res := &ScanResult{Schema: schema.String}
+	res := &ScanResult{Schema: schema.String, Dialect: "postgres"}
 
 	// 全テーブル(FK を持たない孤立テーブルも報告対象なので先に取る)。
 	rows, err := db.Query(`

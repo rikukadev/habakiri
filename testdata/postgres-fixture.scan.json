@@ -1,0 +1,89 @@
+{
+  "schema": "public",
+  "dialect": "postgres",
+  "tables": [
+    "customers",
+    "invoices",
+    "logs",
+    "order_items",
+    "orders",
+    "pair_refs",
+    "pairs",
+    "regions",
+    "shipments"
+  ],
+  "fks": [
+    {
+      "constraint": "customers_region_id_fkey",
+      "child_table": "customers",
+      "child_columns": [
+        "region_id"
+      ],
+      "parent_table": "regions",
+      "delete_rule": "NO ACTION",
+      "all_not_null": false
+    },
+    {
+      "constraint": "invoices_order_id_fkey",
+      "child_table": "invoices",
+      "child_columns": [
+        "order_id"
+      ],
+      "parent_table": "orders",
+      "delete_rule": "SET NULL",
+      "all_not_null": false
+    },
+    {
+      "constraint": "order_items_order_id_fkey",
+      "child_table": "order_items",
+      "child_columns": [
+        "order_id"
+      ],
+      "parent_table": "orders",
+      "delete_rule": "CASCADE",
+      "all_not_null": true
+    },
+    {
+      "constraint": "orders_customer_id_fkey",
+      "child_table": "orders",
+      "child_columns": [
+        "customer_id"
+      ],
+      "parent_table": "customers",
+      "delete_rule": "NO ACTION",
+      "all_not_null": true
+    },
+    {
+      "constraint": "pair_refs_a_b_fkey",
+      "child_table": "pair_refs",
+      "child_columns": [
+        "a",
+        "b"
+      ],
+      "parent_table": "pairs",
+      "delete_rule": "NO ACTION",
+      "all_not_null": false
+    },
+    {
+      "constraint": "shipments_customer_id_fkey",
+      "child_table": "shipments",
+      "child_columns": [
+        "customer_id"
+      ],
+      "parent_table": "customers",
+      "delete_rule": "NO ACTION",
+      "all_not_null": true
+    },
+    {
+      "constraint": "shipments_order_id_fkey",
+      "child_table": "shipments",
+      "child_columns": [
+        "order_id"
+      ],
+      "parent_table": "orders",
+      "delete_rule": "SET NULL",
+      "all_not_null": false
+    }
+  ],
+  "cross_schema_fks": null
+}

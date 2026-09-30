@@ -26,16 +26,20 @@ import (
 var version = "0.5.0"
 
 func main() {
-	os.Exit(run())
+	os.Exit(run(filepath.Base(os.Args[0]), os.Args[1:], os.Stdout, os.Stderr))
 }
 
-func run() int {
-	prog := filepath.Base(os.Args[0])
+// run は CLI 本体。引数と出力先を受け取る形にしてあるのは、ゴールデン回帰テスト
+// (golden_test.go)が実バイナリと同じ経路を通れるようにするため。
+func run(prog string, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet(prog, flag.ContinueOnError)
+	fs.SetOutput(stderr)
 	dsn := fs.String("dsn", os.Getenv("HABAKIRI_DSN"),
 		"DSN。MySQL (user:pass@tcp(host:3306)/dbname) または Postgres (postgres://user:pass@host:5432/dbname)。環境変数 HABAKIRI_DSN でも可")
 	railsDir := fs.String("rails", "", "Rails アプリのルート(または app/models)を静的に読む。DB 接続不要")
 	yii1Dir := fs.String("yii1", "", "Yii 1.x アプリのルート(または protected/models)を静的に読む。DB 接続不要")
+	schemaJSON := fs.String("schema-json", "", "--dump-schema で書き出したスキャン結果を DSN の代わりに読む(DB に繋げない環境へスキーマだけ持ち出して解析する)")
+	dumpSchema := fs.String("dump-schema", "", "スキャン結果(テーブルと FK)を JSON でこのファイルへ書き出す")
 	jsonOut := fs.Bool("json", false, "JSON で出力")
 	mermaid := fs.String("mermaid", "", "Mermaid 図をこのファイルへ書き出す")
 	svgOut := fs.String("svg", "", "切る前の E-R 図(SVG)をこのファイルへ機械生成する")
@@ -55,7 +59,7 @@ func run() int {
 	hub := fs.Int("hub", 0, "hub 判定の次数閾値(0 = 自動: max(6, ノード数の 15%))")
 	showVersion := fs.Bool("version", false, "バージョン表示")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, `%s: FK グラフから分割可能なポイントを出す(MySQL / Postgres)
+		fmt.Fprintf(stderr, `%s: FK グラフから分割可能なポイントを出す(MySQL / Postgres)
 
 使い方:
   %s --dsn "user:pass@tcp(127.0.0.1:3306)/mydb" [--json] [--mermaid out.mmd] [--hub N]
@@ -67,22 +71,22 @@ func run() int {
 `, prog, prog, prog, prog, prog)
 		fs.PrintDefaults()
 	}
-	if err := fs.Parse(os.Args[1:]); err != nil {
+	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	if *showVersion {
-		fmt.Println(prog, version)
+		_, _ = fmt.Fprintln(stdout, prog, version)
 		return 0
 	}
 	sources := 0
-	for _, s := range []string{*dsn, *railsDir, *yii1Dir} {
+	for _, s := range []string{*dsn, *schemaJSON, *railsDir, *yii1Dir} {
 		if s != "" {
 			sources++
 		}
 	}
 	if sources != 1 {
 		if sources > 1 {
-			fmt.Fprintln(os.Stderr, prog+": --dsn / --rails / --yii1 はどれか 1 つだけ")
+			fmt.Fprintln(stderr, prog+": --dsn / --schema-json / --rails / --yii1 はどれか 1 つだけ")
 		} else {
 			fs.Usage()
 		}
@@ -96,6 +100,8 @@ func run() int {
 		sc, err = ScanRails(*railsDir)
 	case *yii1Dir != "":
 		sc, err = ScanYii1(*yii1Dir)
+	case *schemaJSON != "":
+		sc, err = LoadSchemaJSON(*schemaJSON)
 	default:
 		// DSN のスキームでドライバを判別する。postgres:// / postgresql:// 以外は
 		// go-sql-driver の DSN 形式とみなす(MySQL に URL スキームは無い)。
@@ -106,20 +112,26 @@ func run() int {
 		var db *sql.DB
 		db, err = sql.Open(driver, *dsn)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, prog+":", err)
+			fmt.Fprintln(stderr, prog+":", err)
 			return 1
 		}
 		defer func() { _ = db.Close() }()
 		sc, err = scan(db)
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, prog+":", err)
+		fmt.Fprintln(stderr, prog+":", err)
 		return 1
+	}
+	if *dumpSchema != "" {
+		if err := DumpSchemaJSON(*dumpSchema, sc); err != nil {
+			fmt.Fprintln(stderr, prog+":", err)
+			return 1
+		}
 	}
 	if *coocFile != "" {
 		cooc, err := LoadCooc(*coocFile)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, prog+":", err)
+			fmt.Fprintln(stderr, prog+":", err)
 			return 1
 		}
 		sc.Cooc = cooc
@@ -129,12 +141,12 @@ func run() int {
 	if *patternsFile != "" {
 		raw, err := os.ReadFile(*patternsFile)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, prog+":", err)
+			fmt.Fprintln(stderr, prog+":", err)
 			return 1
 		}
 		var pm map[string]string
 		if err := json.Unmarshal(raw, &pm); err != nil {
-			fmt.Fprintln(os.Stderr, prog+":", err)
+			fmt.Fprintln(stderr, prog+":", err)
 			return 1
 		}
 		for k, v := range pm {
@@ -152,12 +164,12 @@ func run() int {
 		tChurn := map[string]int{}
 		if *churnDir != "" {
 			if len(sc.FileTables) == 0 {
-				fmt.Fprintln(os.Stderr, prog+": --churn は静的ソース(--rails/--yii1)と併用してください(ファイル→テーブル対応が要る)")
+				fmt.Fprintln(stderr, prog+": --churn は静的ソース(--rails/--yii1)と併用してください(ファイル→テーブル対応が要る)")
 				return 2
 			}
 			fc, err := LoadChurn(*churnDir)
 			if err != nil {
-				fmt.Fprintln(os.Stderr, prog+":", err)
+				fmt.Fprintln(stderr, prog+":", err)
 				return 1
 			}
 			tChurn = tableChurn(sc.FileTables, fc)
@@ -167,7 +179,7 @@ func run() int {
 			var err error
 			tCrit, err = LoadCriticality(*critFile)
 			if err != nil {
-				fmt.Fprintln(os.Stderr, prog+":", err)
+				fmt.Fprintln(stderr, prog+":", err)
 				return 1
 			}
 		}
@@ -180,12 +192,12 @@ func run() int {
 		}
 		f, err := os.Create(path)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, prog+":", err)
+			fmt.Fprintln(stderr, prog+":", err)
 			return false
 		}
 		write(f)
 		if err := f.Close(); err != nil {
-			fmt.Fprintln(os.Stderr, prog+":", err)
+			fmt.Fprintln(stderr, prog+":", err)
 			return false
 		}
 		return true
@@ -199,15 +211,15 @@ func run() int {
 		}
 		f, err := os.Create(path)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, prog+":", err)
+			fmt.Fprintln(stderr, prog+":", err)
 			return false
 		}
 		if err := render(f, a); err != nil {
-			fmt.Fprintln(os.Stderr, prog+":", err)
+			fmt.Fprintln(stderr, prog+":", err)
 			return false
 		}
 		if err := f.Close(); err != nil {
-			fmt.Fprintln(os.Stderr, prog+":", err)
+			fmt.Fprintln(stderr, prog+":", err)
 			return false
 		}
 		return true
@@ -219,11 +231,8 @@ func run() int {
 	}
 	if *emitContract != "" {
 		dialect := "static"
-		if *dsn != "" {
-			dialect = "mysql"
-			if strings.HasPrefix(*dsn, "postgres") {
-				dialect = "postgres"
-			}
+		if sc.Dialect != "" {
+			dialect = sc.Dialect
 		}
 		if !writeFile(*emitContract, func(f *os.File) { WriteContract(f, a, dialect) }) {
 			return 1
@@ -239,22 +248,22 @@ func run() int {
 	if *baseline != "" {
 		prev, err := LoadBaseline(*baseline)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, prog+":", err)
+			fmt.Fprintln(stderr, prog+":", err)
 			return 1
 		}
-		if CompareBaseline(os.Stdout, prev, a) {
+		if CompareBaseline(stdout, prev, a) {
 			return 3
 		}
 		return 0
 	}
 
 	if *jsonOut {
-		if err := WriteJSON(os.Stdout, a); err != nil {
-			fmt.Fprintln(os.Stderr, prog+":", err)
+		if err := WriteJSON(stdout, a); err != nil {
+			fmt.Fprintln(stderr, prog+":", err)
 			return 1
 		}
 		return 0
 	}
-	WriteText(os.Stdout, a)
+	WriteText(stdout, a)
 	return 0
 }

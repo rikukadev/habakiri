@@ -1,0 +1,10 @@
+# 中立形式(1 行 1 トランザクション)。ゴールデン回帰テスト用の共起ログ。
+posts, search_entries
+posts, search_entries
+posts, search_entries
+users, search_entries
+comments, posts
+comments, posts
+comments, access_grants
+taxonomy
+posts, taxonomy

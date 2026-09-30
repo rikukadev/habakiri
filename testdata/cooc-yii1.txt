@@ -1,0 +1,10 @@
+# 中立形式(1 行 1 トランザクション)。ゴールデン回帰テスト用の共起ログ。
+post, comment
+post, comment
+post, attachment
+post, attachment
+post, attachment
+comment, attachment
+tbl_user
+post, tbl_user
+category, post_category

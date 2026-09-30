@@ -24,7 +24,10 @@ type FK struct {
 
 // ScanResult はスキャンの生データ。
 type ScanResult struct {
-	Schema   string   `json:"schema"`
+	Schema string `json:"schema"`
+	// Dialect: DB スキャン由来なら "mysql" / "postgres"(--emit-contract の方言)。
+	// 静的ソースは空。
+	Dialect  string   `json:"dialect,omitempty"`
 	Tables   []string `json:"tables"`
 	FKs      []FK     `json:"fks"`
 	CrossFKs []FK     `json:"cross_schema_fks"` // 別スキーマの親を指す FK(DDL ロックが跨ぐ)
@@ -60,7 +63,7 @@ func Scan(db *sql.DB) (*ScanResult, error) {
 		return nil, fmt.Errorf("DSN にデータベース名が入っていません(例: user:pass@tcp(host:3306)/dbname)")
 	}
 
-	res := &ScanResult{Schema: schema}
+	res := &ScanResult{Schema: schema, Dialect: "mysql"}
 
 	// 全テーブル(FK を持たない孤立テーブルも報告対象なので先に取る)。
 	rows, err := db.Query(`

@@ -1,0 +1,301 @@
+{
+  "schema": "public",
+  "table_count": 9,
+  "fk_count": 7,
+  "isolated_tables": [
+    "logs"
+  ],
+  "shared_kernel": null,
+  "hub_threshold": 6,
+  "cascade_groups": {
+    "order_items": [
+      "order_items",
+      "orders"
+    ]
+  },
+  "blocks": [
+    [
+      "customers",
+      "order_items",
+      "shipments"
+    ],
+    [
+      "invoices"
+    ],
+    [
+      "pair_refs"
+    ],
+    [
+      "pairs"
+    ],
+    [
+      "regions"
+    ]
+  ],
+  "edges": [
+    {
+      "a": "customers",
+      "b": "order_items",
+      "weight": 2,
+      "max_weight": 2,
+      "fk_count": 1,
+      "bridge": false,
+      "fks": [
+        {
+          "constraint": "orders_customer_id_fkey",
+          "child_table": "orders",
+          "child_columns": [
+            "customer_id"
+          ],
+          "parent_table": "customers",
+          "delete_rule": "NO ACTION",
+          "all_not_null": true
+        }
+      ]
+    },
+    {
+      "a": "customers",
+      "b": "regions",
+      "weight": 1,
+      "max_weight": 1,
+      "fk_count": 1,
+      "bridge": true,
+      "cut_level": 1,
+      "fks": [
+        {
+          "constraint": "customers_region_id_fkey",
+          "child_table": "customers",
+          "child_columns": [
+            "region_id"
+          ],
+          "parent_table": "regions",
+          "delete_rule": "NO ACTION",
+          "all_not_null": false
+        }
+      ]
+    },
+    {
+      "a": "customers",
+      "b": "shipments",
+      "weight": 2,
+      "max_weight": 2,
+      "fk_count": 1,
+      "bridge": false,
+      "fks": [
+        {
+          "constraint": "shipments_customer_id_fkey",
+          "child_table": "shipments",
+          "child_columns": [
+            "customer_id"
+          ],
+          "parent_table": "customers",
+          "delete_rule": "NO ACTION",
+          "all_not_null": true
+        }
+      ]
+    },
+    {
+      "a": "invoices",
+      "b": "order_items",
+      "weight": 1,
+      "max_weight": 1,
+      "fk_count": 1,
+      "bridge": true,
+      "cut_level": 1,
+      "fks": [
+        {
+          "constraint": "invoices_order_id_fkey",
+          "child_table": "invoices",
+          "child_columns": [
+            "order_id"
+          ],
+          "parent_table": "orders",
+          "delete_rule": "SET NULL",
+          "all_not_null": false
+        }
+      ]
+    },
+    {
+      "a": "order_items",
+      "b": "shipments",
+      "weight": 1,
+      "max_weight": 1,
+      "fk_count": 1,
+      "bridge": false,
+      "fks": [
+        {
+          "constraint": "shipments_order_id_fkey",
+          "child_table": "shipments",
+          "child_columns": [
+            "order_id"
+          ],
+          "parent_table": "orders",
+          "delete_rule": "SET NULL",
+          "all_not_null": false
+        }
+      ]
+    },
+    {
+      "a": "pair_refs",
+      "b": "pairs",
+      "weight": 1,
+      "max_weight": 1,
+      "fk_count": 1,
+      "bridge": true,
+      "cut_level": 1,
+      "fks": [
+        {
+          "constraint": "pair_refs_a_b_fkey",
+          "child_table": "pair_refs",
+          "child_columns": [
+            "a",
+            "b"
+          ],
+          "parent_table": "pairs",
+          "delete_rule": "NO ACTION",
+          "all_not_null": false
+        }
+      ]
+    }
+  ],
+  "islands": null,
+  "hub_contracts": null,
+  "partition": {
+    "groups": [
+      {
+        "name": "customers",
+        "tables": 8,
+        "units": [
+          "customers",
+          "invoices",
+          "pair_refs",
+          "pairs",
+          "regions"
+        ],
+        "hubs": null,
+        "glue": {
+          "FK": 3
+        }
+      }
+    ],
+    "modularity": 0,
+    "max_modularity": 0,
+    "levels": [
+      {
+        "k": 1,
+        "modularity": 0,
+        "groups": [
+          {
+            "name": "customers",
+            "tables": 8,
+            "units": [
+              "customers",
+              "invoices",
+              "pair_refs",
+              "pairs",
+              "regions"
+            ],
+            "hubs": null,
+            "glue": {
+              "FK": 3
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "bridges": [
+    {
+      "a": "customers",
+      "b": "regions",
+      "weight": 1,
+      "side_a_size": 4,
+      "side_b_size": 1,
+      "fks": [
+        {
+          "constraint": "customers_region_id_fkey",
+          "child_table": "customers",
+          "child_columns": [
+            "region_id"
+          ],
+          "parent_table": "regions",
+          "delete_rule": "NO ACTION",
+          "all_not_null": false
+        }
+      ],
+      "difficulty": "易(NULL 許容のみ — 値参照化だけで切れる)",
+      "cut_level": 1,
+      "pattern": "結果整合(outbox→イベント購読)or 読みレプリカ"
+    },
+    {
+      "a": "invoices",
+      "b": "order_items",
+      "weight": 1,
+      "side_a_size": 1,
+      "side_b_size": 4,
+      "fks": [
+        {
+          "constraint": "invoices_order_id_fkey",
+          "child_table": "invoices",
+          "child_columns": [
+            "order_id"
+          ],
+          "parent_table": "orders",
+          "delete_rule": "SET NULL",
+          "all_not_null": false
+        }
+      ],
+      "difficulty": "易(NULL 許容のみ — 値参照化だけで切れる)",
+      "cut_level": 1,
+      "pattern": "結果整合(outbox→イベント購読)or 読みレプリカ"
+    },
+    {
+      "a": "pair_refs",
+      "b": "pairs",
+      "weight": 1,
+      "side_a_size": 1,
+      "side_b_size": 1,
+      "fks": [
+        {
+          "constraint": "pair_refs_a_b_fkey",
+          "child_table": "pair_refs",
+          "child_columns": [
+            "a",
+            "b"
+          ],
+          "parent_table": "pairs",
+          "delete_rule": "NO ACTION",
+          "all_not_null": false
+        }
+      ],
+      "difficulty": "易(NULL 許容のみ — 値参照化だけで切れる)",
+      "cut_level": 1,
+      "pattern": "結果整合(outbox→イベント購読)or 読みレプリカ"
+    }
+  ],
+  "thinnest_seams": [
+    {
+      "a": "order_items",
+      "b": "shipments",
+      "weight": 1,
+      "fk_count": 1
+    },
+    {
+      "a": "customers",
+      "b": "order_items",
+      "weight": 2,
+      "fk_count": 1
+    },
+    {
+      "a": "customers",
+      "b": "shipments",
+      "weight": 2,
+      "fk_count": 1
+    }
+  ],
+  "cross_schema_fks": null,
+  "notes": [
+    "FK が無いことは無関係の証明ではない — アプリ層 JOIN・ポリモーフィック関連は静的スキャンでは見えない。--cooc でクエリログの書き込み共起を持ち込める。",
+    "CASCADE 集約は「切らない」判断を機械化したもの。切りたくなったらまず CASCADE を外す設計判断が先。"
+  ]
+}
