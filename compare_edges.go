@@ -229,9 +229,6 @@ func classifyEdge(physical, logical, observed Presence) string {
 
 // observedScopes は「DB がこのテーブルを見たか」「静的解析がこのテーブルの
 // モデルを見たか」を返す。
-//
-// 合流した結果なら、各ソースが見たテーブルの集合が残っている。単独ソースの
-// 結果は、そのソースのテーブルだけを見ており、もう片方は何も見ていない。
 func observedScopes(sc *ScanResult) (phys, logic func(string) bool) {
 	set := func(ts []string) func(string) bool {
 		m := make(map[string]bool, len(ts))
@@ -240,12 +237,20 @@ func observedScopes(sc *ScanResult) (phys, logic func(string) bool) {
 		}
 		return func(t string) bool { return m[t] }
 	}
-	none := func(string) bool { return false }
+	pt, lt, _, _ := observedTables(sc)
+	return set(pt), set(lt)
+}
+
+// observedTables は各ソースが見たテーブルの一覧と、そのソースを読んだかどうか。
+//
+// 合流した結果なら、各ソースが見たテーブルの集合が残っている。単独ソースの
+// 結果は、そのソースのテーブルだけを見ており、もう片方は何も見ていない。
+func observedTables(sc *ScanResult) (phys, logic []string, physRead, logicRead bool) {
 	if sc.Merged {
-		return set(sc.PhysicalTables), set(sc.LogicalTables)
+		return sc.PhysicalTables, sc.LogicalTables, true, true
 	}
 	// 単独ソース。どちらのソースかは FK の証拠で決める(証拠が無い古い構築
-	// 経路の結果は、どちらとも言えないので両方 unobserved)。
+	// 経路の結果は、どちらとも言えないので両方「読んでいない」)。
 	var anyPhys, anyLogic bool
 	for _, fk := range sc.FKs {
 		anyPhys = anyPhys || fk.Enforced()
@@ -253,9 +258,9 @@ func observedScopes(sc *ScanResult) (phys, logic func(string) bool) {
 	}
 	switch {
 	case sc.Dialect != "" || (anyPhys && !anyLogic):
-		return set(sc.Tables), none
+		return sc.Tables, nil, true, false
 	case anyLogic && !anyPhys:
-		return none, set(sc.Tables)
+		return nil, sc.Tables, false, true
 	}
-	return none, none
+	return nil, nil, false, false
 }
