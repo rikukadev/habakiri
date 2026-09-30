@@ -1016,8 +1016,9 @@ var (
 	// 宣言の先頭: 'name' => array(self::KIND,  /  'name' => [self::KIND,  /  $r['name'] = array(self::KIND,
 	// 代入の形 $r['name'] = array(self::KIND, も読む。STAT(件数の集計)も相手側の FK 列を言う
 	reYiiRelHead = regexp.MustCompile(`(?:['"](\w+)['"]\s*=>|\$\w+\[\s*['"](\w+)['"]\s*\]\s*=)\s*(array\s*\(|\[)\s*self::(BELONGS_TO|HAS_MANY|HAS_ONE|MANY_MANY|STAT)\s*,\s*`)
-	// 相手: 'Class' / Class::class / \Ns\Class::class
-	reYiiRelTarget = regexp.MustCompile(`^(?:['"](\w+)['"]|\\?(?:\w+\\)*(\w+)::class)\s*,\s*`)
+	// 相手: 'Class' / 'Ns\Class'(文字列の名前空間。'\\' の二重エスケープも)/
+	// Class::class / \Ns\Class::class。名前空間は剥がして短い名前で引く(#63)
+	reYiiRelTarget = regexp.MustCompile(`^(?:['"]\\{0,2}(?:\w+\\{1,2})*(\w+)['"]|\\?(?:\w+\\)*(\w+)::class)\s*,\s*`)
 	reYiiQuoted    = regexp.MustCompile(`^(?:'([^']*)'|"([^"]*)")`)
 	reYiiPair      = regexp.MustCompile(`['"](\w+)['"]\s*=>\s*['"](\w+)['"]`)
 	reYiiItem      = regexp.MustCompile(`['"](\w+)['"]`)

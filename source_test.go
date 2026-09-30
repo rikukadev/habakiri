@@ -619,6 +619,8 @@ func TestScanYii1RelationForms(t *testing.T) {
 		"settings(form_id)→forms":     "HAS_ONE の列の対応は相手側",
 		"answers(form_ref)→forms":     "on 句から列を読む",
 		"forms(account_id)→accounts":  "::class で書いた相手",
+		"forms(lead_id)→contacts":     "名前空間付きの文字列の相手(#63)",
+		"forms(sponsor_id)→accounts":  "名前空間付きの文字列の相手(二重エスケープ)",
 		"forms(reviewer_id)→contacts": "クラス名の大文字小文字違い",
 	} {
 		if _, ok := idx[key]; !ok {

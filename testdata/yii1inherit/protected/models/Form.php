@@ -26,6 +26,9 @@ class Form extends AppActiveRecord
             'account' => array(self::BELONGS_TO, Account::class, 'account_id'),
             // クラス名の大文字小文字違い(PHP は区別しない)
             'reviewer' => array(self::BELONGS_TO, 'contact', 'reviewer_id'),
+            // 相手を名前空間付きの文字列で書く(#63)。二重エスケープも
+            'lead' => array(self::BELONGS_TO, 'App\models\Contact', 'lead_id'),
+            'sponsor' => array(self::BELONGS_TO, "\\App\\models\\Account", 'sponsor_id'),
             // コメントアウトした宣言は読まない
             // 'ghost' => array(self::BELONGS_TO, 'Account', 'ghost_id'),
             /* 'ghost2' => array(self::BELONGS_TO, 'Account', 'ghost2_id'), */
