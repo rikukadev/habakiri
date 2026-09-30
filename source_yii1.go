@@ -46,11 +46,10 @@ var (
 	// 2 段継承を取りこぼす。
 	reYiiClassDecl = regexp.MustCompile(`(?m)^\s*(abstract\s+|final\s+)?class\s+(\w+)\s+extends\s+\\?(?:\w+\\)*(\w+)`)
 	reYiiARRoot    = regexp.MustCompile(`ActiveRecord$`)
-	// tableName() の本体が文字列リテラル 1 つを返すだけなら静的
-	reYiiStaticReturn = regexp.MustCompile(`^\s*return\s+['"]([^'"]*)['"]\s*;\s*$`)
-	// 連結で組む名前の先頭('{{responses_' . $this->dynamicId . '}}')
-	reYiiConcatHead = regexp.MustCompile(`^\s*return\s+['"]([^'"]+)['"]\s*\.`)
-	reYiiReturnVar  = regexp.MustCompile(`\breturn\s+\$\w+\s*;`)
+	// relations() の宣言をループで組み立てる(メタデータ等から実行時に作る)
+	reYiiRelLoop    = regexp.MustCompile(`\b(foreach|for|while)\s*\(`)
+	reYiiParentRels = regexp.MustCompile(`parent::relations\s*\(\s*\)`)
+	reYiiTestDir    = regexp.MustCompile(`/tests?/`)
 	rePHPComment    = regexp.MustCompile(`(?s)/\*.*?\*/|//[^\n]*|#[^\n]*`)
 	reYiiMM         = regexp.MustCompile(`^\s*([\w.{}]+)\s*\(\s*([\w]+)\s*,\s*([\w]+)\s*\)\s*$`)
 	reYiiCb         = regexp.MustCompile(`function\s+(beforeSave|afterSave|beforeDelete|afterDelete|beforeValidate|afterValidate|beforeFind|afterFind|afterConstruct|behaviors)\s*\(`)
@@ -117,6 +116,10 @@ func ScanYii1(dir string) (*ScanResult, error) {
 		if protected != "" && !strings.Contains(filepath.ToSlash(path), "/models/") {
 			return nil
 		}
+		// テストのクラス(モック・フィクスチャ)はアプリのモデルではない
+		if reYiiTestDir.MatchString(filepath.ToSlash(path)) {
+			return nil
+		}
 		files = append(files, path)
 		return nil
 	})
@@ -137,7 +140,7 @@ func ScanYii1(dir string) (*ScanResult, error) {
 		return nil, fmt.Errorf("%s に CActiveRecord 系のモデルが見つかりません", modelsDir)
 	}
 
-	res := yiiToScan(dir, models, prefix, d.dynamic)
+	res := yiiToScan(dir, models, prefix, d.dynamic, d.familyOf)
 	if prefix != "" {
 		res.Notes = append(res.Notes, fmt.Sprintf(
 			"yii1 設定の tablePrefix %q を {{...}} で書かれたテーブル名に前置した(protected/config/main.php)", prefix))
@@ -179,7 +182,7 @@ func ScanYii1(dir string) (*ScanResult, error) {
 	return res, nil
 }
 
-func yiiToScan(dir string, models map[string]*yiiModel, prefix string, dynamic map[string]string) *ScanResult {
+func yiiToScan(dir string, models map[string]*yiiModel, prefix string, dynamic map[string]string, familyOf map[string]TableFamily) *ScanResult {
 	res := &ScanResult{Schema: "yii1:" + filepath.Base(strings.TrimRight(dir, "/"))}
 	tables := map[string]bool{}
 	classes := make([]string, 0, len(models))
@@ -198,12 +201,21 @@ func yiiToScan(dir string, models map[string]*yiiModel, prefix string, dynamic m
 	for c := range models {
 		folded[strings.ToLower(c)] = append(folded[strings.ToLower(c)], c)
 	}
+	for c := range familyOf {
+		if _, ok := models[c]; !ok {
+			folded[strings.ToLower(c)] = append(folded[strings.ToLower(c)], c)
+		}
+	}
 	tableOf := func(class string) (string, bool) {
+		if cs := folded[strings.ToLower(class)]; models[class] == nil && len(cs) == 1 {
+			class = cs[0]
+		}
 		if m, ok := models[class]; ok {
 			return m.tableName, true
 		}
-		if cs := folded[strings.ToLower(class)]; len(cs) == 1 {
-			return models[cs[0]].tableName, true
+		// abstract な族の基底(具象クラスを実行時に作る)も、族の頂点として関連の端になる
+		if f, ok := familyOf[class]; ok {
+			return f.Vertex(), true
 		}
 		return "", false
 	}
@@ -215,6 +227,34 @@ func yiiToScan(dir string, models map[string]*yiiModel, prefix string, dynamic m
 			return
 		}
 		unresolved = append(unresolved, fmt.Sprintf("%s.%s → %s", cc, r.name, r.target))
+	}
+
+	// テーブル族。同じ形のクラスは 1 つの族(1 頂点)にまとめる
+	famIdx := map[string]int{}
+	famClasses := make([]string, 0, len(familyOf))
+	for c := range familyOf {
+		famClasses = append(famClasses, c)
+	}
+	sort.Strings(famClasses)
+	for _, c := range famClasses {
+		f := familyOf[c]
+		i, ok := famIdx[f.Vertex()]
+		if !ok {
+			i = len(res.Families)
+			famIdx[f.Vertex()] = i
+			res.Families = append(res.Families, TableFamily{Prefix: f.Prefix, Suffix: f.Suffix})
+			tables[f.Vertex()] = true
+		}
+		res.Families[i].Models = append(res.Families[i].Models, c)
+	}
+	if len(res.Families) > 0 {
+		var parts []string
+		for _, f := range res.Families {
+			parts = append(parts, fmt.Sprintf("%s(%s)", f.Vertex(), strings.Join(f.Models, ", ")))
+		}
+		res.Notes = append(res.Notes, fmt.Sprintf(
+			"yii1: テーブル名を「文字列 + 実行時の値」で組むモデルは、テーブル族として 1 頂点にまとめた(具体的なテーブルではない。DB と併用すると DB の <接頭辞><数字> を束ねる): %s",
+			strings.Join(parts, ", ")))
 	}
 
 	// BELONGS_TO と HAS_MANY/HAS_ONE は同じエッジの両側宣言なので、child+parent+cols で重複排除。
@@ -273,7 +313,7 @@ func yiiToScan(dir string, models map[string]*yiiModel, prefix string, dynamic m
 				}
 				addFK(m.tableName, target, splitCols(r.fkSpec),
 					fmt.Sprintf("yii1:%s→%s", cc, r.target), m, r)
-			case "HAS_MANY", "HAS_ONE":
+			case "HAS_MANY", "HAS_ONE", "STAT":
 				target, ok := tableOf(r.target)
 				if !ok {
 					unknown(cc, r)
@@ -524,7 +564,10 @@ type yiiDecl struct {
 // yiiDiscovery はモデル判定の結果。
 type yiiDiscovery struct {
 	models  map[string]*yiiModel // テーブルを持つ具体的なモデル
-	dynamic map[string]string    // テーブル名を実行時に組み立てるモデル → 族の表記
+	dynamic map[string]string    // テーブル名を静的に決められないモデル → 理由
+	// familyOf: テーブル族のクラス(abstract の基底も含む)→ 族の形。
+	// 族は静的な 1 頂点 <接頭辞>*<後ろ> として関連の端になる
+	familyOf map[string]TableFamily
 	// relTotal / relSkipped: relations() の宣言の総数と、関係として読めなかった
 	// 宣言の理由別の件数(読めなかったものを 0 件に見せない)
 	relTotal   int
@@ -555,8 +598,9 @@ func yiiMethodBody(src, name string) (string, bool) {
 //     (連結の先頭が読めれば「テーブル族」として注記)
 //   - relations() が静的に読めない(実行時に組み立てる)なら、黙って 0 本にせず注記
 func yiiDiscover(dir string, files []string, prefix string) (*yiiDiscovery, error) {
-	d := &yiiDiscovery{models: map[string]*yiiModel{}, dynamic: map[string]string{}, relSkipped: map[string]int{}}
+	d := &yiiDiscovery{models: map[string]*yiiModel{}, dynamic: map[string]string{}, familyOf: map[string]TableFamily{}, relSkipped: map[string]int{}}
 	decls := map[string]*yiiDecl{}
+	dupOf := map[string][]string{} // 同名クラス → 「先 と 後」
 	var order []string
 	for _, f := range files {
 		raw, err := os.ReadFile(f)
@@ -570,8 +614,8 @@ func yiiDiscover(dir string, files []string, prefix string) (*yiiDiscovery, erro
 		}
 		if prev, dup := decls[cm[2]]; dup {
 			// Yii1 のクラス名はグローバル。同名が 2 つあると実行時にどちらかしか
-			// 読まれない。先に見つけた方(パス順)を採り、注記する。
-			d.dupes = append(d.dupes, fmt.Sprintf("%s(%s と %s)", cm[2], sourceOrigin(dir, prev.path, 0), sourceOrigin(dir, f, 0)))
+			// 読まれない。先に見つけた方(パス順)を採り、モデルなら注記する(下で絞る)。
+			dupOf[cm[2]] = append(dupOf[cm[2]], fmt.Sprintf("%s と %s", sourceOrigin(dir, prev.path, 0), sourceOrigin(dir, f, 0)))
 			continue
 		}
 		decls[cm[2]] = &yiiDecl{class: cm[2], parent: cm[3], path: f, src: src,
@@ -593,10 +637,25 @@ func yiiDiscover(dir string, files []string, prefix string) (*yiiDiscovery, erro
 		return false, ""
 	}
 
+	// 同名クラスの注記は ActiveRecord の子孫だけ(フォームモデル等は対象外)
+	var dupNames []string
+	for c := range dupOf {
+		if ok, _ := isAR(c); ok {
+			dupNames = append(dupNames, c)
+		}
+	}
+	sort.Strings(dupNames)
+	for _, c := range dupNames {
+		for _, pair := range dupOf[c] {
+			d.dupes = append(d.dupes, fmt.Sprintf("%s(%s)", c, pair))
+		}
+	}
+
 	type info struct {
-		hasTable, staticTable bool
-		table, family         string
+		hasTable              bool
+		tableBody             string // tableName() の本体(解決は全クラスを読んだ後)
 		hasRels, readableRels bool
+		inheritsRels          bool // parent::relations() を足している
 		rels                  []yiiRelation
 	}
 	infos := map[string]*info{}
@@ -616,18 +675,7 @@ func yiiDiscover(dir string, files []string, prefix string) (*yiiDiscovery, erro
 		extended[decl.parent] = true
 		in := &info{}
 		if body, has := yiiMethodBody(decl.src, "tableName"); has {
-			in.hasTable = true
-			if m := reYiiStaticReturn.FindStringSubmatch(body); m != nil {
-				in.staticTable, in.table = true, yiiTableName(m[1], prefix)
-			} else if m := reYiiConcatHead.FindStringSubmatch(body); m != nil {
-				head := strings.TrimPrefix(m[1], "{{")
-				if strings.HasPrefix(m[1], "{{") {
-					head = prefix + head
-				}
-				in.family = "テーブル族 " + head + "*"
-			} else {
-				in.family = "名前を静的に読めない"
-			}
+			in.hasTable, in.tableBody = true, body
 		}
 		if body, has := yiiMethodBody(decl.src, "relations"); has {
 			in.hasRels = true
@@ -640,9 +688,10 @@ func yiiDiscover(dir string, files []string, prefix string) (*yiiDiscovery, erro
 			for _, n := range skipped {
 				d.relTotal += n
 			}
-			// 読めないのは return $relations; のように変数を返す(実行時に組み立てる)
-			// ときだけ。空の配列・on で結合する関連・列の対応表は静的に書かれている
-			in.readableRels = !reYiiReturnVar.MatchString(stripPHPComments(body))
+			// 読めないのは宣言をループで組み立てるときだけ。変数に入れて返す・
+			// array_merge で足す・$r['x'] = array(...) で足すのは、書かれた宣言がすべて
+			in.readableRels = !reYiiRelLoop.MatchString(stripPHPComments(body))
+			in.inheritsRels = reYiiParentRels.MatchString(stripPHPComments(body))
 		}
 		infos[c] = in
 	}
@@ -664,6 +713,85 @@ func yiiDiscover(dir string, files []string, prefix string) (*yiiDiscovery, erro
 		return nil
 	}
 
+	// methodIn はクラス c から祖先へ辿って、メソッド name の本体を探す(PHP のメソッド解決)
+	methodIn := func(c, name string) (string, bool) {
+		seen := map[string]bool{}
+		for cur := c; !seen[cur]; {
+			seen[cur] = true
+			decl, ok := decls[cur]
+			if !ok {
+				return "", false
+			}
+			if body, ok := yiiMethodBody(decl.src, name); ok {
+				return body, true
+			}
+			cur = decl.parent
+		}
+		return "", false
+	}
+	// propertyType はプロパティ $name の型(クラス名)。型付きプロパティか、
+	// 直前の phpdoc の @var から読む。祖先へ辿る。分からなければ空
+	propertyType := func(c, name string) string {
+		reTyped := regexp.MustCompile(`(?:public|protected|private)\s+\??\\?(?:\w+\\)*(\w+)\s+\$` + name + `\b`)
+		reDoc := regexp.MustCompile(`@var\s+\\?(?:\w+\\)*(\w+)(?:\|null)?\s+\$` + name + `\b[^\n]*\*/\s*(?:public|protected|private|var)\s+\$` + name + `\b`)
+		seen := map[string]bool{}
+		for cur := c; !seen[cur]; {
+			seen[cur] = true
+			decl, ok := decls[cur]
+			if !ok {
+				return ""
+			}
+			for _, re := range []*regexp.Regexp{reTyped, reDoc} {
+				if m := re.FindStringSubmatch(decl.src); m != nil {
+					return m[1]
+				}
+			}
+			cur = decl.parent
+		}
+		return ""
+	}
+	// tableForm は tableName()(または getter)の本体からテーブル名の形を決める。
+	// $this は c(遅延束縛)。$this->x と $this->関連->x は、Yii の CComponent と
+	// 同じく getX() に解決して辿る(深さ 3 まで)。
+	var tableForm func(c, body string, depth int) yiiTableForm
+	tableForm = func(c, body string, depth int) yiiTableForm {
+		expr, ok := yiiReturnExpr(body)
+		if !ok {
+			return yiiTableForm{why: "return を読めない"}
+		}
+		if f, ok := yiiLiteralForm(expr, prefix); ok {
+			return f
+		}
+		m := reYiiThisChain.FindStringSubmatch(expr)
+		if m == nil || depth >= 3 {
+			return yiiTableForm{why: "名前を静的に読めない"}
+		}
+		owner, prop := c, m[2]
+		if m[1] != "" {
+			// $this->a->x: a の型(関連の相手、または型注釈のあるプロパティ)で getX() を探す
+			owner = ""
+			if rin := ancestor(c, func(i *info) bool { return i.hasRels }); rin != nil {
+				for _, r := range rin.rels {
+					if r.name == m[1] {
+						owner = r.target
+					}
+				}
+			}
+			if owner == "" {
+				owner = propertyType(c, m[1])
+			}
+			if owner == "" {
+				return yiiTableForm{why: "名前を静的に読めない"}
+			}
+		}
+		getter, ok := methodIn(owner, "get"+strings.ToUpper(prop[:1])+prop[1:])
+		if !ok {
+			// getter の無いプロパティ = 外から渡す名前(コンストラクタ等)
+			return yiiTableForm{why: "名前を外から渡す"}
+		}
+		return tableForm(owner, getter, depth+1)
+	}
+
 	var bases, dynamics []string
 	unreadable := map[string]int{} // relations() を静的に読めないクラス → それを使うモデル数
 	for _, c := range order {
@@ -673,27 +801,43 @@ func yiiDiscover(dir string, files []string, prefix string) (*yiiDiscovery, erro
 		}
 		decl := decls[c]
 		tin := ancestor(c, func(i *info) bool { return i.hasTable })
-		dynamicTable := tin != nil && !tin.staticTable
+		// tableName() を持たなければ Yii の既定(クラス名)
+		form := yiiTableForm{static: true, table: c}
+		if tin != nil {
+			form = tableForm(c, tin.tableBody, 0)
+		}
+		if form.fam {
+			// テーブル族: 静的な 1 頂点(<接頭辞>*<後ろ>)として扱う。関連の相手にもなる
+			d.familyOf[c] = TableFamily{Prefix: form.prefix, Suffix: form.suffix}
+		}
 		if decl.abstract || (extended[c] && !in.hasTable && !in.hasRels) {
 			bases = append(bases, c)
-			if dynamicTable {
-				// abstract のまま実行時に具象クラスを作る設計(LimeSurvey の Response)。
-				// 関連の相手として現れるので、族として覚えておく
-				d.dynamic[c] = tin.family
-			}
 			continue
 		}
-		if dynamicTable {
-			d.dynamic[c] = tin.family
-			dynamics = append(dynamics, fmt.Sprintf("%s(%s)", c, tin.family))
+		if !form.static && !form.fam {
+			d.dynamic[c] = form.why
+			dynamics = append(dynamics, fmt.Sprintf("%s(%s)", c, form.why))
 			continue
 		}
-		m := &yiiModel{class: c, tableName: c, fileSrc: decl.src, path: decl.path}
-		if tin != nil {
-			m.tableName = tin.table
+		m := &yiiModel{class: c, tableName: form.table, fileSrc: decl.src, path: decl.path}
+		if form.fam {
+			m.tableName = d.familyOf[c].Vertex()
 		}
 		if rin := ancestor(c, func(i *info) bool { return i.hasRels }); rin != nil {
 			m.relations = rin.rels
+			// parent::relations() を足していれば、その先の祖先の宣言も持つ
+			for cur := rin; cur != nil && cur.inheritsRels; {
+				owner := ""
+				for k, v := range infos {
+					if v == cur {
+						owner = k
+					}
+				}
+				cur = ancestor(decls[owner].parent, func(i *info) bool { return i.hasRels })
+				if cur != nil {
+					m.relations = append(m.relations, cur.rels...)
+				}
+			}
 			if !rin.readableRels {
 				owner := c
 				for cur := c; ; cur = decls[cur].parent {
@@ -707,11 +851,6 @@ func yiiDiscover(dir string, files []string, prefix string) (*yiiDiscovery, erro
 		}
 		d.models[c] = m
 	}
-	for c, fam := range d.dynamic {
-		if decls[c].abstract {
-			dynamics = append(dynamics, fmt.Sprintf("%s(%s)", c, fam))
-		}
-	}
 	sort.Strings(dynamics)
 
 	if len(bases) > 0 {
@@ -722,7 +861,7 @@ func yiiDiscover(dir string, files []string, prefix string) (*yiiDiscovery, erro
 	}
 	if len(dynamics) > 0 {
 		d.notes = append(d.notes, fmt.Sprintf(
-			"[判定不能] テーブル名を実行時に組み立てるモデル %d 個は、具体的なテーブルにせず関連も FK にしていない: %s",
+			"[判定不能] テーブル名を静的に決められないモデル %d 個は、テーブルにせず関連も FK にしていない: %s",
 			len(dynamics), strings.Join(dynamics, ", ")))
 	}
 	if len(unreadable) > 0 {
@@ -732,7 +871,7 @@ func yiiDiscover(dir string, files []string, prefix string) (*yiiDiscovery, erro
 		}
 		sort.Strings(parts)
 		d.notes = append(d.notes, fmt.Sprintf(
-			"[判定不能] relations() を静的に読めない(実行時に組み立てる)— このモデルの関連は 0 本に見えるが、無いことの確認ではない: %s",
+			"[判定不能] relations() の宣言をループで組み立てる(メタデータ等から実行時に作る)— 書かれている宣言だけを読んだ。組み立てる分は見えないが、無いことの確認ではない: %s",
 			strings.Join(parts, ", ")))
 	}
 	if skippedN := func() int {
@@ -764,12 +903,114 @@ func yiiDiscover(dir string, files []string, prefix string) (*yiiDiscovery, erro
 	return d, nil
 }
 
+// yiiTableForm は tableName() から読めたテーブル名の形。
+type yiiTableForm struct {
+	static         bool // 文字列 1 つ: table が名前
+	table          string
+	fam            bool // 文字列 + 実行時の値 (+ 文字列): テーブル族
+	prefix, suffix string
+	why            string // どちらでもないときの理由
+}
+
+var (
+	reYiiReturn = regexp.MustCompile(`(?s)\breturn\s+(.+?);`)
+	// $this->x / $this->関連->x(CComponent の getter で解決する)
+	reYiiThisChain = regexp.MustCompile(`^\$this->(?:(\w+)->)?(\w+)$`)
+	// PHP の文字列リテラル 1 つ(二重引用符の中の変数展開は含まない)
+	reYiiLit = regexp.MustCompile(`^(?:'([^'\\]*)'|"([^"\\$]*)")$`)
+)
+
+// yiiReturnExpr は本体の最初の return の式(コメントを除き、空白を詰める)。
+func yiiReturnExpr(body string) (string, bool) {
+	m := reYiiReturn.FindStringSubmatch(maskPHPComments(body))
+	if m == nil {
+		return "", false
+	}
+	return strings.Join(strings.Fields(m[1]), " "), true
+}
+
+// yiiLiteralForm は式が「文字列」か「文字列 . 式 (. 文字列)」かを見る。
+// 連結の先頭が文字列なら族(ID の部分は何でもよい)。末尾も文字列なら後ろとして持つ。
+func yiiLiteralForm(expr, prefix string) (yiiTableForm, bool) {
+	parts := splitPHPConcat(expr)
+	lit := func(p string) (string, bool) {
+		m := reYiiLit.FindStringSubmatch(strings.TrimSpace(p))
+		if m == nil {
+			return "", false
+		}
+		return m[1] + m[2], true
+	}
+	if len(parts) == 1 {
+		if v, ok := lit(parts[0]); ok {
+			return yiiTableForm{static: true, table: yiiTableName(v, prefix)}, true
+		}
+		return yiiTableForm{}, false
+	}
+	head, ok := lit(parts[0])
+	if !ok || head == "" || head == "{{" {
+		return yiiTableForm{}, false
+	}
+	tail := ""
+	if v, ok := lit(parts[len(parts)-1]); ok {
+		tail = v
+	}
+	// 途中にも文字列があると、ID の位置が 1 か所に決まらない(族にしない)
+	for _, p := range parts[1 : len(parts)-1] {
+		if _, ok := lit(p); ok {
+			return yiiTableForm{}, false
+		}
+	}
+	braced := strings.HasPrefix(head, "{{")
+	head = strings.TrimPrefix(head, "{{")
+	tail = strings.TrimSuffix(tail, "}}")
+	if braced {
+		head = prefix + head
+	}
+	return yiiTableForm{fam: true, prefix: head, suffix: tail}, true
+}
+
+// splitPHPConcat は式を最上位の連結演算子 . で分ける(文字列と括弧の中は分けない)。
+func splitPHPConcat(expr string) []string {
+	var parts []string
+	depth, start := 0, 0
+	var quote byte
+	for i := 0; i < len(expr); i++ {
+		c := expr[i]
+		switch {
+		case quote != 0:
+			switch c {
+			case '\\':
+				i++ // エスケープの次の 1 文字を飛ばす
+			case quote:
+				quote = 0
+			}
+		case c == '\'' || c == '"':
+			quote = c
+		case c == '(' || c == '[':
+			depth++
+		case c == ')' || c == ']':
+			depth--
+		case c == '.' && depth == 0:
+			// 数値の小数点(1.5)は連結ではない
+			if i > 0 && i+1 < len(expr) && isDigit(expr[i-1]) && isDigit(expr[i+1]) {
+				continue
+			}
+			parts = append(parts, strings.TrimSpace(expr[start:i]))
+			start = i + 1
+		}
+	}
+	return append(parts, strings.TrimSpace(expr[start:]))
+}
+
+func isDigit(c byte) bool { return c >= '0' && c <= '9' }
+
 // stripPHPComments はコメントを除く(判定の邪魔になる NOTE 行など)。
 func stripPHPComments(src string) string { return rePHPComment.ReplaceAllString(src, "") }
 
 var (
-	// 宣言の先頭: 'name' => array(self::KIND,  /  'name' => [self::KIND,
-	reYiiRelHead = regexp.MustCompile(`['"](\w+)['"]\s*=>\s*(array\s*\(|\[)\s*self::(BELONGS_TO|HAS_MANY|HAS_ONE|MANY_MANY)\s*,\s*`)
+	// 宣言の先頭: 'name' => array(self::KIND,  /  'name' => [self::KIND,  /  $r['name'] = array(self::KIND,
+	// 代入の形 $r['name'] = array(self::KIND, も読む。STAT(件数の集計)も相手側の FK 列を言う
+	reYiiRelHead = regexp.MustCompile(`(?:['"](\w+)['"]\s*=>|\$\w+\[\s*['"](\w+)['"]\s*\]\s*=)\s*(array\s*\(|\[)\s*self::(BELONGS_TO|HAS_MANY|HAS_ONE|MANY_MANY|STAT)\s*,\s*`)
 	// 相手: 'Class' / Class::class / \Ns\Class::class
 	reYiiRelTarget = regexp.MustCompile(`^(?:['"](\w+)['"]|\\?(?:\w+\\)*(\w+)::class)\s*,\s*`)
 	reYiiQuoted    = regexp.MustCompile(`^(?:'([^']*)'|"([^"]*)")`)
@@ -843,15 +1084,21 @@ func parseYiiRelations(rawSrc, path string) ([]yiiRelation, map[string]int) {
 	skipped := map[string]int{}
 	var rels []yiiRelation
 	for _, loc := range reYiiRelHead.FindAllStringSubmatchIndex(src, -1) {
-		name, kind := src[loc[2]:loc[3]], src[loc[6]:loc[7]]
-		body, ok := balanced(src, loc[4])
+		name, kind := "", src[loc[8]:loc[9]]
+		if loc[2] >= 0 {
+			name = src[loc[2]:loc[3]]
+		} else {
+			name = src[loc[4]:loc[5]]
+		}
+		open := loc[6]
+		body, ok := balanced(src, open)
 		if !ok {
 			skipped[relSkipFK]++
 			continue
 		}
 		// body は "self::KIND, target, fk, ..."。先頭の self::KIND, を飛ばす
 		rest := src[loc[1]:]
-		if end := loc[4] + 1 + len(body); end > loc[1] {
+		if end := open + 1 + len(body); end > loc[1] {
 			rest = src[loc[1]:end]
 		}
 		tm := reYiiRelTarget.FindStringSubmatch(rest)

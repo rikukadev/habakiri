@@ -3,6 +3,14 @@
 class Form extends AppActiveRecord
 {
     public function tableName() { return 'forms'; }
+    public function getTimingsTable()
+    {
+        return '{{timings_' . $this->id . '}}';
+    }
+    public function getSnapshotTable()
+    {
+        return '{{snapshots_' . $this->id . '_v}}';
+    }
     public function relations()
     {
         return array(

@@ -12,6 +12,7 @@ package main
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -116,8 +117,168 @@ func relationKey(fk FK) string {
 	return fk.ChildTable + "\x00" + strings.ToLower(strings.Join(fk.ChildCols, ",")) + "\x00" + fk.ParentTable
 }
 
+// bundleFamilies は、静的ソースのテーブル族に当たる DB のテーブル
+// (<接頭辞><数字><後ろ>)を族の頂点 1 つに束ねた DB スキャンを返す(#53)。
+//
+// 束ねるのは一意に決まるときだけ:
+//   - 当たる DB のテーブルが 1 つ以上ある
+//   - それが静的ソースの具体的なモデルのテーブルと重ならない
+//   - 2 つの族に同時に当たらない
+//
+// 決まらなければ束ねず、族の頂点は DB に見えないまま残る(Edge Diff では判定不能)。
+// 束ねた DB の FK は、同じ関係(子・列・親)なら 1 本に畳んで証拠を足す。
+func bundleFamilies(phys, logic *ScanResult) (*ScanResult, []string) {
+	if len(logic.Families) == 0 {
+		return phys, nil
+	}
+	vertices := map[string]bool{}
+	for _, f := range logic.Families {
+		vertices[f.Vertex()] = true
+	}
+	var static []string
+	for _, t := range logic.Tables {
+		if !vertices[t] {
+			static = append(static, t)
+		}
+	}
+	r := newTableResolver(phys.Tables, static)
+	claimed := map[string]bool{} // 静的なモデルのテーブル(DB 名に写した後)
+	for _, t := range static {
+		if db, ok := r.resolve(t); ok {
+			claimed[db] = true
+		}
+	}
+
+	var notes []string
+	hits := map[string][]string{} // DB のテーブル → 当たった族の頂点
+	members := map[string][]string{}
+	for _, f := range logic.Families {
+		v := f.Vertex()
+		// 接頭辞は宣言のまま、または DB から推定した接頭辞を前置したもの
+		prefixes := []string{f.Prefix}
+		if r.prefix != "" {
+			prefixes = append(prefixes, r.prefix+f.Prefix)
+		}
+		var found []string
+		matched := 0
+		for _, p := range prefixes {
+			re := regexp.MustCompile(`(?i)^` + regexp.QuoteMeta(p) + `\d+` + regexp.QuoteMeta(f.Suffix) + `$`)
+			var cand []string
+			for _, t := range phys.Tables {
+				if re.MatchString(t) {
+					cand = append(cand, t)
+				}
+			}
+			if len(cand) > 0 {
+				matched++
+				found = cand
+			}
+		}
+		switch {
+		case matched == 0:
+			notes = append(notes, fmt.Sprintf(
+				"[判定不能] テーブル族 %s: DB に %s<数字>%s のテーブルが無い — 族の頂点は DB から見えないまま", v, f.Prefix, f.Suffix))
+			continue
+		case matched > 1:
+			notes = append(notes, fmt.Sprintf(
+				"[判定不能] テーブル族 %s: DB に接頭辞の有無で 2 通りの候補がある — 束ねていない", v))
+			continue
+		}
+		var clash []string
+		for _, t := range found {
+			if claimed[t] {
+				clash = append(clash, t)
+			}
+		}
+		if len(clash) > 0 {
+			notes = append(notes, fmt.Sprintf(
+				"[判定不能] テーブル族 %s: 当たる DB のテーブルが具体的なモデルのテーブルと重なる(%s)— 束ねていない",
+				v, strings.Join(clash, ", ")))
+			continue
+		}
+		members[v] = found
+		for _, t := range found {
+			hits[t] = append(hits[t], v)
+		}
+	}
+	rename := map[string]string{}
+	var order []string
+	for v := range members {
+		order = append(order, v)
+	}
+	sort.Strings(order)
+	for _, v := range order {
+		ok := true
+		for _, t := range members[v] {
+			if len(hits[t]) > 1 {
+				ok = false
+			}
+		}
+		if !ok {
+			notes = append(notes, fmt.Sprintf(
+				"[判定不能] テーブル族 %s: 当たる DB のテーブルが別の族にも当たる — 束ねていない", v))
+			continue
+		}
+		for _, t := range members[v] {
+			rename[t] = v
+		}
+		shown := members[v]
+		if len(shown) > 5 {
+			shown = append(append([]string(nil), shown[:5]...), fmt.Sprintf("他 %d 個", len(members[v])-5))
+		}
+		notes = append(notes, fmt.Sprintf(
+			"テーブル族 %s: DB のテーブル %d 個(%s)を 1 頂点に束ねた", v, len(members[v]), strings.Join(shown, ", ")))
+	}
+	if len(rename) == 0 {
+		return phys, notes
+	}
+
+	out := *phys
+	name := func(t string) string {
+		if v, ok := rename[t]; ok {
+			return v
+		}
+		return t
+	}
+	seenT := map[string]bool{}
+	out.Tables = nil
+	for _, t := range phys.Tables {
+		if n := name(t); !seenT[n] {
+			seenT[n] = true
+			out.Tables = append(out.Tables, n)
+		}
+	}
+	sort.Strings(out.Tables)
+	out.FKs = nil
+	index := map[string]int{}
+	for _, fk := range phys.FKs {
+		selfRef := fk.ChildTable == fk.ParentTable
+		fk.ChildTable, fk.ParentTable = name(fk.ChildTable), name(fk.ParentTable)
+		fk.Evidences = append([]Evidence(nil), fk.Evidences...)
+		if !selfRef && fk.ChildTable == fk.ParentTable {
+			continue // 族の中のテーブル同士(束ねると頂点の内側)
+		}
+		bundled := rename[fk.ChildTable] != "" || vertices[fk.ChildTable] || vertices[fk.ParentTable]
+		if bundled {
+			if i, ok := index[relationKey(fk)]; ok {
+				out.FKs[i].Evidences = append(out.FKs[i].Evidences, fk.Evidences...)
+				continue
+			}
+			index[relationKey(fk)] = len(out.FKs)
+		}
+		out.FKs = append(out.FKs, fk)
+	}
+	out.CrossFKs = nil
+	for _, fk := range phys.CrossFKs {
+		fk.ChildTable = name(fk.ChildTable)
+		out.CrossFKs = append(out.CrossFKs, fk)
+	}
+	return &out, notes
+}
+
 // MergeScans は DB スキャンと静的ソースのスキャンを合流させる。
 func MergeScans(phys, logic *ScanResult) *ScanResult {
+	phys, famNotes := bundleFamilies(phys, logic)
 	res := &ScanResult{
 		Schema:         phys.Schema + "+" + logic.Schema,
 		Merged:         true,
@@ -206,6 +367,7 @@ func MergeScans(phys, logic *ScanResult) *ScanResult {
 	}
 
 	res.Notes = append(res.Notes, phys.Notes...)
+	res.Notes = append(res.Notes, famNotes...)
 	for _, n := range logic.Notes {
 		if n != yii1WeightNote {
 			res.Notes = append(res.Notes, n)
