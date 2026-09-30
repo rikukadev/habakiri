@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -535,6 +537,20 @@ func TestScanYii1Inheritance(t *testing.T) {
 	t.Run("名前を外から渡すモデルは判定不能", func(t *testing.T) {
 		if !strings.Contains(notes, "Wrapper(名前を外から渡す)") {
 			t.Errorf("注: %v", sc.Notes)
+		}
+	})
+
+	t.Run("アプリ自体が tests/ の下にあっても読む", func(t *testing.T) {
+		dir := filepath.Join(t.TempDir(), "tests", "app")
+		if err := os.CopyFS(dir, os.DirFS("testdata/yii1inherit")); err != nil {
+			t.Fatal(err)
+		}
+		sc2, err := ScanYii1(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, want := strings.Join(sc2.Tables, ","), strings.Join(sc.Tables, ","); got != want {
+			t.Errorf("tables = %s, want %s", got, want)
 		}
 	})
 

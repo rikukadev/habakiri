@@ -117,7 +117,8 @@ func ScanYii1(dir string) (*ScanResult, error) {
 			return nil
 		}
 		// テストのクラス(モック・フィクスチャ)はアプリのモデルではない
-		if reYiiTestDir.MatchString(filepath.ToSlash(path)) {
+		// (起点からの相対パスで見る — アプリ自体が tests/ の下にあっても読めるように)
+		if rel, err := filepath.Rel(walkRoot, path); err == nil && reYiiTestDir.MatchString("/"+filepath.ToSlash(rel)) {
 			return nil
 		}
 		files = append(files, path)
