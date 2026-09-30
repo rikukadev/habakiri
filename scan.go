@@ -26,6 +26,9 @@ type FK struct {
 	// Nullable: NULL 許容の三値。AllNotNull は「NOT NULL と確認できた」の意味で
 	// 残し、NULL可 と Unknown の区別はこちらが持つ。
 	Nullable Nullability `json:"-"`
+	// showEvidence: JSON に出自(evidences / enforced / nullable / 重みの理由)を
+	// 出すか。--show-evidence のときだけ立つ(provenance.go の MarshalJSON)。
+	showEvidence bool
 }
 
 // ScanResult はスキャンの生データ。
@@ -48,6 +51,12 @@ type ScanResult struct {
 	// CoocNoWeight: true なら共起を分割グラフに算入しない(baseline 用の
 	// 静的モード。レポートには出る)。--cooc-weight=false で設定。
 	CoocNoWeight bool `json:"-"`
+	// Merged: DB スキャンと静的ソースを合流させた結果か。
+	Merged bool `json:"-"`
+	// Projected: --graph で見方を明示した結果か。
+	Projected bool `json:"-"`
+	// ShowEvidence: --show-evidence。レポートに FK の出自を出す。
+	ShowEvidence bool `json:"-"`
 	// PhysicalTables / LogicalTables: 合流時に、各ソースが見たテーブル(DB 名に
 	// 写した後)。単独ソースでは空(Tables がそのまま唯一のソースの集合)。
 	PhysicalTables []string `json:"-"`

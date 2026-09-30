@@ -43,6 +43,14 @@ type Analysis struct {
 	Suspects      []Suspect           `json:"suspects,omitempty"` // FK ではない結合の疑い(静的ソース由来)
 	coocNoWeight  bool                // 共起を分割グラフに算入しない(--cooc-weight=false)
 	Candidates    []Candidate         `json:"candidates,omitempty"` // 切り出し候補ランキング(--churn 指定時)
+	// FKs: 全 FK とその出自(--show-evidence のときだけ)。hub へ向かう FK は
+	// Edges に現れないので、出自を漏れなく見せるには別に一覧が要る。
+	FKs []FK `json:"fks,omitempty"`
+	// showEvidence: 出自の節を出す。unknownAware: NULL 許容の Unknown を
+	// 「NULL可」と書き分ける(併用・--graph 明示・--show-evidence のとき。
+	// 単独解析の既存出力は変えない)。
+	showEvidence bool
+	unknownAware bool
 	Notes         []string            `json:"notes"`
 }
 
@@ -133,6 +141,8 @@ func Analyze(sc *ScanResult, hubThreshold int) *Analysis {
 		CrossFKs:   sc.CrossFKs,
 		Suspects:   sc.Suspects,
 		coocNoWeight: sc.CoocNoWeight,
+		showEvidence: sc.ShowEvidence,
+		unknownAware: sc.ShowEvidence || sc.Merged || sc.Projected,
 		Notes:      append([]string(nil), sc.Notes...), // ソース固有の注意を合流
 	}
 
@@ -324,6 +334,15 @@ func Analyze(sc *ScanResult, hubThreshold int) *Analysis {
 		br.SideASize = blockTables(blockOf[bp.A])
 		br.SideBSize = blockTables(blockOf[bp.B])
 		br.Difficulty = "易(NULL 許容のみ — 値参照化だけで切れる)"
+		unknown := false
+		for _, fk := range e.FKs {
+			if fk.Nullability() == NullableUnknown {
+				unknown = true
+			}
+		}
+		if a.unknownAware && unknown {
+			br.Difficulty = "未確定(NULL 許容を判定できない FK を含む — 列定義を確認してから見積もる)"
+		}
 		for _, fk := range e.FKs {
 			if fk.AllNotNull {
 				br.Difficulty = "中(NOT NULL あり — 既定値かバックフィルの設計が要る)"
@@ -517,6 +536,17 @@ func Analyze(sc *ScanResult, hubThreshold int) *Analysis {
 
 	a.Partition = BuildPartition(a)
 
+	if a.showEvidence {
+		for i := range a.Edges {
+			a.Edges[i].FKs = withEvidence(a.Edges[i].FKs)
+		}
+		for i := range a.Bridges {
+			a.Bridges[i].FKs = withEvidence(a.Bridges[i].FKs)
+		}
+		a.CrossFKs = withEvidence(a.CrossFKs)
+		a.FKs = withEvidence(sortFKs(sc.FKs))
+	}
+
 	if sc.Cooc == nil {
 		a.Notes = append(a.Notes,
 			"FK が無いことは無関係の証明ではない — アプリ層 JOIN・ポリモーフィック関連は静的スキャンでは見えない。--cooc でクエリログの書き込み共起を持ち込める。")
@@ -672,12 +702,8 @@ func WriteText(w io.Writer, a *Analysis) {
 		for _, b := range a.Bridges {
 			p("  %s ×— %s   レベル %d   重み %.0f   分離後 %d ↔ %d テーブル", b.A, b.B, b.CutLevel, b.Weight, b.SideASize, b.SideBSize)
 			for _, fk := range b.FKs {
-				null := "NULL可"
-				if fk.AllNotNull {
-					null = "NOT NULL"
-				}
 				p("      %s.%s(%s) → %s  [%s / %s]", fk.ChildTable,
-					strings.Join(fk.ChildCols, ","), null, fk.ParentTable, fk.DeleteRule, fk.Constraint)
+					strings.Join(fk.ChildCols, ","), nullLabel(fk, a.unknownAware), fk.ParentTable, fk.DeleteRule, fk.Constraint)
 			}
 			p("      難易度: %s", b.Difficulty)
 	p("      切断後に書くもの: %s", b.Pattern)
@@ -711,9 +737,43 @@ func WriteText(w io.Writer, a *Analysis) {
 		p("  B%-2d (%d tables) %s", i, total, label)
 	}
 	p("")
+	if a.showEvidence {
+		writeEvidenceText(w, a)
+	}
 	for _, n := range a.Notes {
 		p("注: %s", n)
 	}
+}
+
+// writeEvidenceText は全 FK の出自を並べる(--show-evidence)。
+func writeEvidenceText(w io.Writer, a *Analysis) {
+	p := func(format string, args ...any) { _, _ = fmt.Fprintf(w, format+"\n", args...) }
+	both, physOnly, logicOnly := 0, 0, 0
+	for _, fk := range a.FKs {
+		switch {
+		case fk.Enforced() && fk.Logical():
+			both++
+		case fk.Enforced():
+			physOnly++
+		case fk.Logical():
+			logicOnly++
+		}
+	}
+	p("■ FK の出自(%d 本)— DB と宣言の両方 %d / DB のみ %d / 宣言のみ %d", len(a.FKs), both, physOnly, logicOnly)
+	p("  (強制 = DB が制約を張っている。重みの理由が logical_* / unknown_provisional のものは DB で確認した値ではない)")
+	for _, fk := range a.FKs {
+		enforced := "強制なし"
+		if fk.Enforced() {
+			enforced = "強制"
+		}
+		wt, reason := weightOf(fk)
+		p("  %s.%s → %s  [%s / %s / %s / 重み %.0f %s]", fk.ChildTable, strings.Join(fk.ChildCols, ","),
+			fk.ParentTable, enforced, nullLabel(fk, true), fk.DeleteRule, wt, reason)
+		for _, ev := range fk.Evidences {
+			p("      %s: %s", ev.Source, ev.Origin)
+		}
+	}
+	p("")
 }
 
 // WriteJSON は機械可読出力。

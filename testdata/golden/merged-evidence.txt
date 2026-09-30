@@ -1,0 +1,56 @@
+スキーマ blog+yii1:yii1app: 7 テーブル / 5 FK
+
+■ 孤立テーブル(1)— FK が無く、今日でも動かせる
+  attachment
+
+■ CASCADE 集約(ライフサイクル一体 — 同じサービスから出さない)
+  [comment] comment, post
+
+■ 橋 = 切断点(4 本)— 分割案の境界を実行するときの FK 作業リスト
+  audit_log ×— tbl_user   レベル 1   重み 1   分離後 1 ↔ 1 テーブル
+      audit_log.user_id(NULL可) → tbl_user  [NO ACTION / fk_audit_user]
+      難易度: 易(NULL 許容のみ — 値参照化だけで切れる)
+      切断後に書くもの: 結果整合(outbox→イベント購読)or 読みレプリカ
+  category ×— post_category   レベル 1   重み 1   分離後 1 ↔ 1 テーブル
+      post_category.category_id(NULL不明) → category  [NO ACTION / yii1:post_category(mm)]
+      難易度: 未確定(NULL 許容を判定できない FK を含む — 列定義を確認してから見積もる)
+      切断後に書くもの: 結果整合(outbox→イベント購読)or 読みレプリカ
+  comment ×— post_category   レベル 1   重み 1   分離後 2 ↔ 1 テーブル
+      post_category.post_id(NULL不明) → post  [NO ACTION / yii1:post_category(mm)]
+      難易度: 未確定(NULL 許容を判定できない FK を含む — 列定義を確認してから見積もる)
+      切断後に書くもの: 結果整合(outbox→イベント購読)or 読みレプリカ
+  comment ×— tbl_user   レベル 2   重み 1   分離後 2 ↔ 1 テーブル
+      post.author_id(NULL不明) → tbl_user  [NO ACTION / yii1:Post→User]
+      難易度: 未確定(NULL 許容を判定できない FK を含む — 列定義を確認してから見積もる)
+      切断後に書くもの: 同期コマンド + pending + 冪等キー / 存在保証 API
+
+■ ブロック(2-辺連結成分)— 内部は密。これ以上の分割は段階 2 の設計判断
+  B0  (1 tables) audit_log
+  B1  (1 tables) category
+  B2  (2 tables) comment(+1)
+  B3  (1 tables) post_category
+  B4  (1 tables) tbl_user
+
+■ FK の出自(5 本)— DB と宣言の両方 1 / DB のみ 1 / 宣言のみ 3
+  (強制 = DB が制約を張っている。重みの理由が logical_* / unknown_provisional のものは DB で確認した値ではない)
+  audit_log.user_id → tbl_user  [強制 / NULL可 / NO ACTION / 重み 1 nullable]
+      physical: fk_audit_user
+  comment.post_id → post  [強制 / NOT NULL / CASCADE / 重み 3 cascade]
+      physical: fk_comment_post
+      logical:yii1: protected/models/Comment.php:8
+      logical:yii1: protected/models/Post.php:9
+  post.author_id → tbl_user  [強制なし / NULL不明 / NO ACTION / 重み 1 unknown_provisional]
+      logical:yii1: protected/models/Post.php:8
+  post_category.category_id → category  [強制なし / NULL不明 / NO ACTION / 重み 1 unknown_provisional]
+      logical:yii1: protected/models/Post.php:10
+  post_category.post_id → post  [強制なし / NULL不明 / NO ACTION / 重み 1 unknown_provisional]
+      logical:yii1: protected/models/Post.php:10
+
+注: [強] Post: beforeDelete/afterDelete 内で Comment を削除 — 手書きカスケード(実質ライフサイクル共有。切らない候補)
+注: [弱] Post: with で Comment を読む(read 側の暗黙結合)
+注: [強] Post: beforeDelete/afterSave/behaviors 等 + 宣言外の Attachment への言及 — Yii1 はカスケードが callback に書かれがち
+注: [強] Post: 生SQL/コマンドビルダで attachment, tbl_user へ書き込み — 宣言に現れない実結合
+注: DB に FK が無く宣言だけの関係のうち、NULL 許容が判定不能なものは重み 1 を暫定で置いている — 「弱いと判明した」ではなく情報不足時の値(--show-evidence で unknown_provisional として見える)
+注: CASCADE 集約 [comment] が 2 テーブル(全体の 25%超)に達した — この規模は集約ではなく「hub への掃除 CASCADE」の融合を疑う。--hub を下げて hub を増やすと分解されることが多い
+注: FK が無いことは無関係の証明ではない — アプリ層 JOIN・ポリモーフィック関連は静的スキャンでは見えない。--cooc でクエリログの書き込み共起を持ち込める。
+注: CASCADE 集約は「切らない」判断を機械化したもの。切りたくなったらまず CASCADE を外す設計判断が先。

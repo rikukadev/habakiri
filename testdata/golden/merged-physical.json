@@ -1,0 +1,132 @@
+{
+  "schema": "blog+yii1:yii1app [physical]",
+  "table_count": 7,
+  "fk_count": 2,
+  "isolated_tables": [
+    "attachment",
+    "category",
+    "post_category"
+  ],
+  "shared_kernel": null,
+  "hub_threshold": 6,
+  "cascade_groups": {
+    "comment": [
+      "comment",
+      "post"
+    ]
+  },
+  "blocks": [
+    [
+      "audit_log"
+    ],
+    [
+      "tbl_user"
+    ]
+  ],
+  "edges": [
+    {
+      "a": "audit_log",
+      "b": "tbl_user",
+      "weight": 1,
+      "max_weight": 1,
+      "fk_count": 1,
+      "bridge": true,
+      "cut_level": 1,
+      "fks": [
+        {
+          "constraint": "fk_audit_user",
+          "child_table": "audit_log",
+          "child_columns": [
+            "user_id"
+          ],
+          "parent_table": "tbl_user",
+          "delete_rule": "NO ACTION",
+          "all_not_null": false
+        }
+      ]
+    }
+  ],
+  "islands": [
+    {
+      "name": "comment",
+      "tables": 2
+    }
+  ],
+  "hub_contracts": null,
+  "partition": {
+    "groups": [
+      {
+        "name": "comment",
+        "tables": 4,
+        "units": [
+          "comment",
+          "audit_log",
+          "tbl_user"
+        ],
+        "hubs": null,
+        "glue": {
+          "FK": 1
+        }
+      }
+    ],
+    "modularity": 0,
+    "max_modularity": 0,
+    "levels": [
+      {
+        "k": 1,
+        "modularity": 0,
+        "groups": [
+          {
+            "name": "comment",
+            "tables": 4,
+            "units": [
+              "comment",
+              "audit_log",
+              "tbl_user"
+            ],
+            "hubs": null,
+            "glue": {
+              "FK": 1
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "bridges": [
+    {
+      "a": "audit_log",
+      "b": "tbl_user",
+      "weight": 1,
+      "side_a_size": 1,
+      "side_b_size": 1,
+      "fks": [
+        {
+          "constraint": "fk_audit_user",
+          "child_table": "audit_log",
+          "child_columns": [
+            "user_id"
+          ],
+          "parent_table": "tbl_user",
+          "delete_rule": "NO ACTION",
+          "all_not_null": false
+        }
+      ],
+      "difficulty": "易(NULL 許容のみ — 値参照化だけで切れる)",
+      "cut_level": 1,
+      "pattern": "結果整合(outbox→イベント購読)or 読みレプリカ"
+    }
+  ],
+  "thinnest_seams": null,
+  "cross_schema_fks": null,
+  "notes": [
+    "[強] Post: beforeDelete/afterDelete 内で Comment を削除 — 手書きカスケード(実質ライフサイクル共有。切らない候補)",
+    "[弱] Post: with で Comment を読む(read 側の暗黙結合)",
+    "[強] Post: beforeDelete/afterSave/behaviors 等 + 宣言外の Attachment への言及 — Yii1 はカスケードが callback に書かれがち",
+    "[強] Post: 生SQL/コマンドビルダで attachment, tbl_user へ書き込み — 宣言に現れない実結合",
+    "DB に FK が無く宣言だけの関係のうち、NULL 許容が判定不能なものは重み 1 を暫定で置いている — 「弱いと判明した」ではなく情報不足時の値(--show-evidence で unknown_provisional として見える)",
+    "CASCADE 集約 [comment] が 2 テーブル(全体の 25%超)に達した — この規模は集約ではなく「hub への掃除 CASCADE」の融合を疑う。--hub を下げて hub を増やすと分解されることが多い",
+    "FK が無いことは無関係の証明ではない — アプリ層 JOIN・ポリモーフィック関連は静的スキャンでは見えない。--cooc でクエリログの書き込み共起を持ち込める。",
+    "CASCADE 集約は「切らない」判断を機械化したもの。切りたくなったらまず CASCADE を外す設計判断が先。"
+  ]
+}

@@ -8,7 +8,7 @@
 > 「羽々」は大蛇の古語で、絡み合った大蛇を斬るためのもの。斬った尾の中からは
 > 草薙剣が出てきた。絡んだモノリスを斬れば、中から新しいサービスが生まれる。
 
-読み取り専用。実地検証と設計の背景は
+分析は読み取り専用。`--emit-contract` はファイル生成のみで DB に書かない。実地検証と設計の背景は
 [ブログ記事](https://rikuka.dev/blog/habakiri-magento2-bridge-cut/)に。
 
 ## クイックスタート
@@ -20,10 +20,14 @@ $ habakiri --dsn "user:pass@tcp(127.0.0.1:3306)/mydb"     # MySQL
 $ habakiri --dsn "postgres://user:pass@host:5432/mydb"    # Postgres(current_schema() が対象)
 $ habakiri --rails /path/to/railsapp                      # Rails app/models(DB 不要)
 $ habakiri --yii1  /path/to/yii1app                       # Yii1 relations()(DB 不要)
+$ habakiri --dsn "..." --yii1 /path/to/yii1app            # 併用: DB の FK と宣言を 1 つのグラフに
 ```
 
 | 主なフラグ | 意味 |
 |---|---|
+| `--graph physical\|logical\|combined` | グラフの見方(下の用語)。既定は入力に応じる: DB だけ → physical、静的ソースだけ → logical、併用 → combined |
+| `--show-evidence` | 各 FK の出自(証拠の位置・DB が強制しているか・NULL 許容・重みの理由)を text / JSON / HTML に出す |
+| `--dump-schema FILE` / `--schema-json FILE` | DB スキャン結果(テーブル名と FK 定義のみ)の書き出し / 読み込み。DB に繋げない環境へスキーマだけ持ち出して解析する |
 | `--hub N` | hub 判定の次数閾値(既定 max(6, 15%)。融合したら下げる) |
 | `--services N` | 分割案のグループ数の希望(既定はモジュラリティ最大) |
 | `--json` / `--mermaid` | 機械可読出力 |
@@ -38,6 +42,23 @@ $ habakiri --yii1  /path/to/yii1app                       # Yii1 relations()(DB 
 | `--churn DIR` / `--criticality FILE` | 切り出し 1 本目候補のランキング(橋 昇順 × 変更頻度 降順 × 事故コスト 昇順。静的ソースと併用) |
 
 DSN は環境変数 `HABAKIRI_DSN` でも渡せる。
+
+## 用語 — どの証拠から組んだグラフか
+
+FK が部分的にしか張られていない DB では、DB だけ読むと未整備の領域が「結合なし」に見える。
+証拠の出どころを分けて持ち、見方を選べるようにしてある。
+
+| 用語 | 定義 |
+|---|---|
+| **Physical** | DB スキーマから得た物理 FK のみ。DB が制約を強制している |
+| **Logical** | ORM の宣言(Yii1 `relations()` / Rails associations)から得た関係のみ。物理 FK の存在を意味しない |
+| **Combined** | Physical + Logical の統合。同じ関係(子テーブル・子の列・親テーブルが一致)は FK 1 本に証拠が 2 件付くだけで、重みは加算しない。属性は DB の値を優先 |
+| **Observed** | `--cooc` の実行時観測。FK とは別の証拠として扱う |
+
+「DB が強制しているか」と「NULL を許すか」は別の軸。宣言からは NULL 許容が分からないことがあり
+(Yii1 の `relations()` は必須性を書けない)、その場合は NULL可 と同じ箱に入れず **unknown** として持つ。
+unknown の重み 1 は「弱いと判明した」ではなく情報不足時の暫定値で、`--show-evidence` では
+重みの理由が `unknown_provisional` と出る。
 
 ## 何が出るか
 
@@ -72,7 +93,8 @@ FK の重み = 切断後に必要な API 契約の強さ:
 宣言外の疑い[強]が同じ対に張る橋は 1 レベル加算(FK が示すより高くつく)。
 
 静的ソースの重み写像: `dependent: :destroy` → CASCADE / 必須 `belongs_to` → NOT NULL /
-`optional:` と Yii1 全般 → NULLABLE。
+`optional:` → NULLABLE / Yii1 全般 → unknown(暫定で 1)。数値は DB 由来と同じだが、
+重みの理由は `logical_*_declared` / `unknown_provisional` になり、DB で確認した値と区別できる。
 
 ### アルゴリズム(すべて決定的)
 
@@ -110,10 +132,14 @@ FK の重み = 切断後に必要な API 契約の強さ:
 
 - 共起は「無いことの証明」に使えない(観測期間の罠 — 月次バッチは 1 週間のログに現れない)。
   狙いは時間的局所性ではなく同一 tx の原子性。時間窓ベースの緩い共起は中立形式で持ち込める
+- 併用時のテーブル名の突合は、完全一致・大文字小文字違い・接頭辞の推定(DB 側に接頭辞付きの名前が
+  揃っているときだけ)まで。突合できなかった宣言は宣言側の名前のまま残り、注に出る
+- 宣言だけの関係は、DB が読めていても NULL 許容を列定義から補完しない(unknown のまま)
 - 静的ソースのインフレクタは簡易実装(外れたら `self.table_name` / `tableName()` で勝つ)
 - 橋 0 本の密結合スキーマは「最薄の継ぎ目」フォールバックのみ
 
 ## 検証
 
-`go test ./...`(グラフ演算・静的ソース・分割の純関数テスト)+ CI の実 Postgres E2E。
+`go test ./...`(グラフ演算・静的ソース・分割の純関数テスト + ゴールデン回帰)+ CI の実 Postgres E2E。
+ゴールデンは v0.5.0 の実バイナリの出力(text / JSON / SVG)で、単独ソースの出力をバイト単位で固定している。
 実地検証: Magento 2(295→2.4.9 358 テーブル、実切断 + HTTP 分離)/ Mastodon(146 モデル、DB 接続ゼロ)。
