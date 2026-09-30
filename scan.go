@@ -48,6 +48,10 @@ type ScanResult struct {
 	// CoocNoWeight: true なら共起を分割グラフに算入しない(baseline 用の
 	// 静的モード。レポートには出る)。--cooc-weight=false で設定。
 	CoocNoWeight bool `json:"-"`
+	// PhysicalTables / LogicalTables: 合流時に、各ソースが見たテーブル(DB 名に
+	// 写した後)。単独ソースでは空(Tables がそのまま唯一のソースの集合)。
+	PhysicalTables []string `json:"-"`
+	LogicalTables  []string `json:"-"`
 	// FileTables: 静的ソースのモデルファイル → テーブル名(--churn の対応付けに使う)。
 	FileTables map[string]string `json:"-"`
 }

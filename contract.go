@@ -30,6 +30,11 @@ func WriteContract(w io.Writer, a *Analysis, dialect string) {
 			p("-- ゲート1: モノリス側の参照が残っていないこと(削除・更新経路の棚卸し)")
 			p("-- ゲート2: 実測共起の確認 — --cooc で %s × %s の対が出ないこと(出るなら同一 tx 依存が残っている)", fk.ChildTable, fk.ParentTable)
 			p("-- ゲート3: baseline 更新 — 実施後に --json を取り直して --baseline を差し替える")
+			if dialect != "static" && len(fk.Evidences) > 0 && !fk.Enforced() {
+				// 合流時: 宣言だけで DB に制約が無い関係。落とす FK が存在しない。
+				p("-- (DB に制約なし — 宣言だけの関係。DROP する FK は無く、アプリ層の切り離しのみ)  %s(%s) → %s", fk.ChildTable, cols, fk.ParentTable)
+				continue
+			}
 			switch dialect {
 			case "postgres":
 				p("ALTER TABLE %s DROP CONSTRAINT %s;  -- %s(%s) → %s", fk.ChildTable, fk.Constraint, fk.ChildTable, cols, fk.ParentTable)
