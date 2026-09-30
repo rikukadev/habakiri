@@ -1,0 +1,31 @@
+スキーマ public: 9 テーブル / 7 FK
+
+■ 孤立テーブル(1)— FK が無く、今日でも動かせる
+  logs
+
+■ CASCADE 集約(ライフサイクル一体 — 同じサービスから出さない)
+  [order_items] order_items, orders
+
+■ 橋 = 切断点(3 本)— 分割案の境界を実行するときの FK 作業リスト
+  customers ×— regions   レベル 1   重み 1   分離後 4 ↔ 1 テーブル
+      customers.region_id(NULL可) → regions  [NO ACTION / customers_region_id_fkey]
+      難易度: 易(NULL 許容のみ — 値参照化だけで切れる)
+      切断後に書くもの: 結果整合(outbox→イベント購読)or 読みレプリカ
+  invoices ×— order_items   レベル 1   重み 1   分離後 1 ↔ 4 テーブル
+      invoices.order_id(NULL可) → orders  [SET NULL / invoices_order_id_fkey]
+      難易度: 易(NULL 許容のみ — 値参照化だけで切れる)
+      切断後に書くもの: 結果整合(outbox→イベント購読)or 読みレプリカ
+  pair_refs ×— pairs   レベル 1   重み 1   分離後 1 ↔ 1 テーブル
+      pair_refs.a,b(NULL可) → pairs  [NO ACTION / pair_refs_a_b_fkey]
+      難易度: 易(NULL 許容のみ — 値参照化だけで切れる)
+      切断後に書くもの: 結果整合(outbox→イベント購読)or 読みレプリカ
+
+■ ブロック(2-辺連結成分)— 内部は密。これ以上の分割は段階 2 の設計判断
+  B0  (4 tables) customers, order_items(+1), shipments
+  B1  (1 tables) invoices
+  B2  (1 tables) pair_refs
+  B3  (1 tables) pairs
+  B4  (1 tables) regions
+
+注: FK が無いことは無関係の証明ではない — アプリ層 JOIN・ポリモーフィック関連は静的スキャンでは見えない。--cooc でクエリログの書き込み共起を持ち込める。
+注: CASCADE 集約は「切らない」判断を機械化したもの。切りたくなったらまず CASCADE を外す設計判断が先。

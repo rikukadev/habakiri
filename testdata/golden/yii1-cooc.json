@@ -1,0 +1,332 @@
+{
+  "schema": "yii1:yii1app",
+  "table_count": 6,
+  "fk_count": 4,
+  "isolated_tables": [
+    "attachment"
+  ],
+  "shared_kernel": null,
+  "hub_threshold": 6,
+  "cascade_groups": {},
+  "blocks": [
+    [
+      "category"
+    ],
+    [
+      "comment"
+    ],
+    [
+      "post"
+    ],
+    [
+      "post_category"
+    ],
+    [
+      "tbl_user"
+    ]
+  ],
+  "edges": [
+    {
+      "a": "category",
+      "b": "post_category",
+      "weight": 1,
+      "max_weight": 1,
+      "fk_count": 1,
+      "bridge": true,
+      "cut_level": 2,
+      "fks": [
+        {
+          "constraint": "yii1:post_category(mm)",
+          "child_table": "post_category",
+          "child_columns": [
+            "category_id"
+          ],
+          "parent_table": "category",
+          "delete_rule": "NO ACTION",
+          "all_not_null": false
+        }
+      ]
+    },
+    {
+      "a": "comment",
+      "b": "post",
+      "weight": 1,
+      "max_weight": 1,
+      "fk_count": 1,
+      "bridge": true,
+      "cut_level": 2,
+      "fks": [
+        {
+          "constraint": "yii1:Comment→Post",
+          "child_table": "comment",
+          "child_columns": [
+            "post_id"
+          ],
+          "parent_table": "post",
+          "delete_rule": "NO ACTION",
+          "all_not_null": false
+        }
+      ]
+    },
+    {
+      "a": "post",
+      "b": "post_category",
+      "weight": 1,
+      "max_weight": 1,
+      "fk_count": 1,
+      "bridge": true,
+      "cut_level": 1,
+      "fks": [
+        {
+          "constraint": "yii1:post_category(mm)",
+          "child_table": "post_category",
+          "child_columns": [
+            "post_id"
+          ],
+          "parent_table": "post",
+          "delete_rule": "NO ACTION",
+          "all_not_null": false
+        }
+      ]
+    },
+    {
+      "a": "post",
+      "b": "tbl_user",
+      "weight": 1,
+      "max_weight": 1,
+      "fk_count": 1,
+      "bridge": true,
+      "cut_level": 2,
+      "fks": [
+        {
+          "constraint": "yii1:Post→User",
+          "child_table": "post",
+          "child_columns": [
+            "author_id"
+          ],
+          "parent_table": "tbl_user",
+          "delete_rule": "NO ACTION",
+          "all_not_null": false
+        }
+      ]
+    }
+  ],
+  "islands": null,
+  "hub_contracts": null,
+  "cooc": [
+    {
+      "a": "attachment",
+      "b": "comment",
+      "count": 1,
+      "npmi": 0,
+      "has_fk": false,
+      "bridge": false
+    },
+    {
+      "a": "attachment",
+      "b": "post",
+      "count": 3,
+      "npmi": 0,
+      "has_fk": false,
+      "bridge": false
+    },
+    {
+      "a": "category",
+      "b": "post_category",
+      "count": 1,
+      "npmi": 1,
+      "has_fk": true,
+      "bridge": true
+    },
+    {
+      "a": "comment",
+      "b": "post",
+      "count": 2,
+      "npmi": 0,
+      "has_fk": true,
+      "bridge": true
+    },
+    {
+      "a": "post",
+      "b": "tbl_user",
+      "count": 1,
+      "npmi": 0.13834583309294793,
+      "has_fk": true,
+      "bridge": true
+    }
+  ],
+  "partition": {
+    "groups": [
+      {
+        "name": "category",
+        "tables": 5,
+        "units": [
+          "category",
+          "comment",
+          "post",
+          "post_category",
+          "tbl_user"
+        ],
+        "hubs": null,
+        "glue": {
+          "FK": 4,
+          "疑い": 2
+        }
+      }
+    ],
+    "modularity": 0,
+    "max_modularity": 0,
+    "levels": [
+      {
+        "k": 1,
+        "modularity": 0,
+        "groups": [
+          {
+            "name": "category",
+            "tables": 5,
+            "units": [
+              "category",
+              "comment",
+              "post",
+              "post_category",
+              "tbl_user"
+            ],
+            "hubs": null,
+            "glue": {
+              "FK": 4,
+              "疑い": 2
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "bridges": [
+    {
+      "a": "category",
+      "b": "post_category",
+      "weight": 1,
+      "side_a_size": 1,
+      "side_b_size": 1,
+      "fks": [
+        {
+          "constraint": "yii1:post_category(mm)",
+          "child_table": "post_category",
+          "child_columns": [
+            "category_id"
+          ],
+          "parent_table": "category",
+          "delete_rule": "NO ACTION",
+          "all_not_null": false
+        }
+      ],
+      "difficulty": "易(NULL 許容のみ — 値参照化だけで切れる)",
+      "cut_level": 2,
+      "pattern": "同期コマンド + pending + 冪等キー / 存在保証 API"
+    },
+    {
+      "a": "comment",
+      "b": "post",
+      "weight": 1,
+      "side_a_size": 1,
+      "side_b_size": 1,
+      "fks": [
+        {
+          "constraint": "yii1:Comment→Post",
+          "child_table": "comment",
+          "child_columns": [
+            "post_id"
+          ],
+          "parent_table": "post",
+          "delete_rule": "NO ACTION",
+          "all_not_null": false
+        }
+      ],
+      "difficulty": "易(NULL 許容のみ — 値参照化だけで切れる)",
+      "cut_level": 2,
+      "pattern": "同期コマンド + pending + 冪等キー / 存在保証 API"
+    },
+    {
+      "a": "post",
+      "b": "post_category",
+      "weight": 1,
+      "side_a_size": 1,
+      "side_b_size": 1,
+      "fks": [
+        {
+          "constraint": "yii1:post_category(mm)",
+          "child_table": "post_category",
+          "child_columns": [
+            "post_id"
+          ],
+          "parent_table": "post",
+          "delete_rule": "NO ACTION",
+          "all_not_null": false
+        }
+      ],
+      "difficulty": "易(NULL 許容のみ — 値参照化だけで切れる)",
+      "cut_level": 1,
+      "pattern": "結果整合(outbox→イベント購読)or 読みレプリカ"
+    },
+    {
+      "a": "post",
+      "b": "tbl_user",
+      "weight": 1,
+      "side_a_size": 1,
+      "side_b_size": 1,
+      "fks": [
+        {
+          "constraint": "yii1:Post→User",
+          "child_table": "post",
+          "child_columns": [
+            "author_id"
+          ],
+          "parent_table": "tbl_user",
+          "delete_rule": "NO ACTION",
+          "all_not_null": false
+        }
+      ],
+      "difficulty": "易(NULL 許容のみ — 値参照化だけで切れる)",
+      "cut_level": 2,
+      "pattern": "同期コマンド + pending + 冪等キー / 存在保証 API"
+    }
+  ],
+  "thinnest_seams": null,
+  "cross_schema_fks": null,
+  "suspects": [
+    {
+      "from_table": "post",
+      "to_table": "comment",
+      "strong": true
+    },
+    {
+      "from_table": "post",
+      "to_table": "comment",
+      "strong": false
+    },
+    {
+      "from_table": "post",
+      "to_table": "attachment",
+      "strong": true
+    },
+    {
+      "from_table": "post",
+      "to_table": "attachment",
+      "strong": true
+    },
+    {
+      "from_table": "post",
+      "to_table": "tbl_user",
+      "strong": true
+    }
+  ],
+  "notes": [
+    "[強] Post: beforeDelete/afterDelete 内で Comment を削除 — 手書きカスケード(実質ライフサイクル共有。切らない候補)",
+    "[弱] Post: with で Comment を読む(read 側の暗黙結合)",
+    "[強] Post: beforeDelete/afterSave/behaviors 等 + 宣言外の Attachment への言及 — Yii1 はカスケードが callback に書かれがち",
+    "[強] Post: 生SQL/コマンドビルダで attachment, tbl_user へ書き込み — 宣言に現れない実結合",
+    "yii1 ソース: relations() に必須性/カスケードの宣言が無いため重みは一律 1。DB スキャン(--dsn)との併用を推奨",
+    "観測範囲で共起の無い橋: post×post_category — もう守っていない制約の可能性(ただし観測期間に注意。無いことの証明には使わない)",
+    "CASCADE 集約は「切らない」判断を機械化したもの。切りたくなったらまず CASCADE を外す設計判断が先。"
+  ]
+}

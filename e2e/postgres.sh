@@ -36,4 +36,16 @@ echo "$out" | jq -e '.bridges[] | select(.a=="pair_refs" or .b=="pair_refs")
   | .fks[0] | select((.child_columns|length)==2 and .all_not_null==false)' > /dev/null \
   || fail "複合 FK の畳み込み/NULL 判定が壊れている"
 
+# ゴールデン: 実 DB の出力がバイト単位で固定値と一致すること。
+# go test 側は同じゴールデンを「スキャン結果のダンプ」から再生しているので、
+# ダンプが実 DB のスキャンと一致することもここで見る(片方だけ古くなるのを防ぐ)。
+root="$(dirname "$0")/.."
+echo "$out" | diff -u "$root/testdata/golden/postgres.json" - > /dev/null \
+  || fail "--json が testdata/golden/postgres.json と一致しない"
+tmp=$(mktemp)
+"$BIN" --dsn "$DSN" --dump-schema "$tmp" > /dev/null
+diff -u "$root/testdata/postgres-fixture.scan.json" "$tmp" \
+  || { rm -f "$tmp"; fail "--dump-schema が testdata/postgres-fixture.scan.json と一致しない"; }
+rm -f "$tmp"
+
 echo "OK: postgres e2e"

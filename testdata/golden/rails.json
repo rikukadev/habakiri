@@ -1,0 +1,261 @@
+{
+  "schema": "rails:railsapp",
+  "table_count": 7,
+  "fk_count": 7,
+  "isolated_tables": [
+    "search_entries"
+  ],
+  "shared_kernel": null,
+  "hub_threshold": 6,
+  "cascade_groups": {
+    "index_entries": [
+      "index_entries",
+      "posts",
+      "users"
+    ]
+  },
+  "blocks": [
+    [
+      "access_grants"
+    ],
+    [
+      "comments"
+    ],
+    [
+      "index_entries"
+    ],
+    [
+      "taxonomy"
+    ]
+  ],
+  "edges": [
+    {
+      "a": "access_grants",
+      "b": "comments",
+      "weight": 1,
+      "max_weight": 1,
+      "fk_count": 1,
+      "bridge": true,
+      "cut_level": 1,
+      "fks": [
+        {
+          "constraint": "ar:comment.access_grant_id",
+          "child_table": "comments",
+          "child_columns": [
+            "access_grant_id"
+          ],
+          "parent_table": "access_grants",
+          "delete_rule": "NO ACTION",
+          "all_not_null": false
+        }
+      ]
+    },
+    {
+      "a": "comments",
+      "b": "index_entries",
+      "weight": 4,
+      "max_weight": 2,
+      "fk_count": 2,
+      "bridge": true,
+      "cut_level": 2,
+      "fks": [
+        {
+          "constraint": "ar:comment.author_id",
+          "child_table": "comments",
+          "child_columns": [
+            "author_id"
+          ],
+          "parent_table": "users",
+          "delete_rule": "NO ACTION",
+          "all_not_null": true
+        },
+        {
+          "constraint": "ar:comment.commentable_id(polymorphic)",
+          "child_table": "comments",
+          "child_columns": [
+            "commentable_id"
+          ],
+          "parent_table": "posts",
+          "delete_rule": "NO ACTION",
+          "all_not_null": true
+        }
+      ]
+    },
+    {
+      "a": "index_entries",
+      "b": "taxonomy",
+      "weight": 1,
+      "max_weight": 1,
+      "fk_count": 1,
+      "bridge": true,
+      "cut_level": 1,
+      "fks": [
+        {
+          "constraint": "ar:post.category_id",
+          "child_table": "posts",
+          "child_columns": [
+            "category_id"
+          ],
+          "parent_table": "taxonomy",
+          "delete_rule": "NO ACTION",
+          "all_not_null": false
+        }
+      ]
+    }
+  ],
+  "islands": null,
+  "hub_contracts": null,
+  "partition": {
+    "groups": [
+      {
+        "name": "index_entries",
+        "tables": 6,
+        "units": [
+          "index_entries",
+          "access_grants",
+          "comments",
+          "taxonomy"
+        ],
+        "hubs": null,
+        "glue": {
+          "FK": 3
+        }
+      }
+    ],
+    "modularity": 0,
+    "max_modularity": 0,
+    "levels": [
+      {
+        "k": 1,
+        "modularity": 0,
+        "groups": [
+          {
+            "name": "index_entries",
+            "tables": 6,
+            "units": [
+              "index_entries",
+              "access_grants",
+              "comments",
+              "taxonomy"
+            ],
+            "hubs": null,
+            "glue": {
+              "FK": 3
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "bridges": [
+    {
+      "a": "access_grants",
+      "b": "comments",
+      "weight": 1,
+      "side_a_size": 1,
+      "side_b_size": 1,
+      "fks": [
+        {
+          "constraint": "ar:comment.access_grant_id",
+          "child_table": "comments",
+          "child_columns": [
+            "access_grant_id"
+          ],
+          "parent_table": "access_grants",
+          "delete_rule": "NO ACTION",
+          "all_not_null": false
+        }
+      ],
+      "difficulty": "易(NULL 許容のみ — 値参照化だけで切れる)",
+      "cut_level": 1,
+      "pattern": "結果整合(outbox→イベント購読)or 読みレプリカ"
+    },
+    {
+      "a": "index_entries",
+      "b": "taxonomy",
+      "weight": 1,
+      "side_a_size": 3,
+      "side_b_size": 1,
+      "fks": [
+        {
+          "constraint": "ar:post.category_id",
+          "child_table": "posts",
+          "child_columns": [
+            "category_id"
+          ],
+          "parent_table": "taxonomy",
+          "delete_rule": "NO ACTION",
+          "all_not_null": false
+        }
+      ],
+      "difficulty": "易(NULL 許容のみ — 値参照化だけで切れる)",
+      "cut_level": 1,
+      "pattern": "結果整合(outbox→イベント購読)or 読みレプリカ"
+    },
+    {
+      "a": "comments",
+      "b": "index_entries",
+      "weight": 4,
+      "side_a_size": 1,
+      "side_b_size": 3,
+      "fks": [
+        {
+          "constraint": "ar:comment.author_id",
+          "child_table": "comments",
+          "child_columns": [
+            "author_id"
+          ],
+          "parent_table": "users",
+          "delete_rule": "NO ACTION",
+          "all_not_null": true
+        },
+        {
+          "constraint": "ar:comment.commentable_id(polymorphic)",
+          "child_table": "comments",
+          "child_columns": [
+            "commentable_id"
+          ],
+          "parent_table": "posts",
+          "delete_rule": "NO ACTION",
+          "all_not_null": true
+        }
+      ],
+      "difficulty": "中(NOT NULL あり — 既定値かバックフィルの設計が要る)",
+      "cut_level": 2,
+      "pattern": "同期コマンド + pending + 冪等キー / 存在保証 API"
+    }
+  ],
+  "thinnest_seams": null,
+  "cross_schema_fks": null,
+  "suspects": [
+    {
+      "from_table": "users",
+      "to_table": "users",
+      "strong": false
+    },
+    {
+      "from_table": "taxonomy",
+      "to_table": "posts",
+      "strong": false
+    },
+    {
+      "from_table": "posts",
+      "to_table": "search_entries",
+      "strong": true
+    },
+    {
+      "from_table": "users",
+      "to_table": "search_entries",
+      "strong": true
+    }
+  ],
+  "notes": [
+    "[強] Post: callback(concern 含む)+ 宣言外の SearchEntry への言及 — 書き込み結合の疑い",
+    "[強] User: callback(concern 含む)+ 宣言外の SearchEntry への言及 — 書き込み結合の疑い",
+    "[弱] AdminUser: メソッド/スコープから宣言外の User への言及",
+    "[弱] Category: メソッド/スコープから宣言外の Post への言及",
+    "CASCADE 集約 [index_entries] が 3 テーブル(全体の 25%超)に達した — この規模は集約ではなく「hub への掃除 CASCADE」の融合を疑う。--hub を下げて hub を増やすと分解されることが多い",
+    "FK が無いことは無関係の証明ではない — アプリ層 JOIN・ポリモーフィック関連は静的スキャンでは見えない。--cooc でクエリログの書き込み共起を持ち込める。",
+    "CASCADE 集約は「切らない」判断を機械化したもの。切りたくなったらまず CASCADE を外す設計判断が先。"
+  ]
+}

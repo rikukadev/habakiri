@@ -1,0 +1,44 @@
+スキーマ yii1:yii1app: 6 テーブル / 4 FK
+
+■ 孤立テーブル(1)— FK が無く、今日でも動かせる
+  attachment
+
+■ 実測共起(--cooc)— 同一トランザクションで一緒に書かれたテーブル対
+  attachment × comment ×1 npmi=0.00  FKなし ← 宣言に現れない結合
+  attachment × post ×3 npmi=0.00  FKなし ← 宣言に現れない結合
+  category × post_category ×1 npmi=1.00  橋 ← 同一 tx の原子性に依存(レベル +1 済み)
+  comment × post ×2 npmi=0.00  橋 ← 同一 tx の原子性に依存(レベル +1 済み)
+  post × tbl_user ×1 npmi=0.14  橋 ← 同一 tx の原子性に依存(レベル +1 済み)
+
+■ 橋 = 切断点(4 本)— 分割案の境界を実行するときの FK 作業リスト
+  category ×— post_category   レベル 2   重み 1   分離後 1 ↔ 1 テーブル
+      post_category.category_id(NULL可) → category  [NO ACTION / yii1:post_category(mm)]
+      難易度: 易(NULL 許容のみ — 値参照化だけで切れる)
+      切断後に書くもの: 同期コマンド + pending + 冪等キー / 存在保証 API
+  comment ×— post   レベル 2   重み 1   分離後 1 ↔ 1 テーブル
+      comment.post_id(NULL可) → post  [NO ACTION / yii1:Comment→Post]
+      難易度: 易(NULL 許容のみ — 値参照化だけで切れる)
+      切断後に書くもの: 同期コマンド + pending + 冪等キー / 存在保証 API
+  post ×— post_category   レベル 1   重み 1   分離後 1 ↔ 1 テーブル
+      post_category.post_id(NULL可) → post  [NO ACTION / yii1:post_category(mm)]
+      難易度: 易(NULL 許容のみ — 値参照化だけで切れる)
+      切断後に書くもの: 結果整合(outbox→イベント購読)or 読みレプリカ
+  post ×— tbl_user   レベル 2   重み 1   分離後 1 ↔ 1 テーブル
+      post.author_id(NULL可) → tbl_user  [NO ACTION / yii1:Post→User]
+      難易度: 易(NULL 許容のみ — 値参照化だけで切れる)
+      切断後に書くもの: 同期コマンド + pending + 冪等キー / 存在保証 API
+
+■ ブロック(2-辺連結成分)— 内部は密。これ以上の分割は段階 2 の設計判断
+  B0  (1 tables) category
+  B1  (1 tables) comment
+  B2  (1 tables) post
+  B3  (1 tables) post_category
+  B4  (1 tables) tbl_user
+
+注: [強] Post: beforeDelete/afterDelete 内で Comment を削除 — 手書きカスケード(実質ライフサイクル共有。切らない候補)
+注: [弱] Post: with で Comment を読む(read 側の暗黙結合)
+注: [強] Post: beforeDelete/afterSave/behaviors 等 + 宣言外の Attachment への言及 — Yii1 はカスケードが callback に書かれがち
+注: [強] Post: 生SQL/コマンドビルダで attachment, tbl_user へ書き込み — 宣言に現れない実結合
+注: yii1 ソース: relations() に必須性/カスケードの宣言が無いため重みは一律 1。DB スキャン(--dsn)との併用を推奨
+注: 観測範囲で共起の無い橋: post×post_category — もう守っていない制約の可能性(ただし観測期間に注意。無いことの証明には使わない)
+注: CASCADE 集約は「切らない」判断を機械化したもの。切りたくなったらまず CASCADE を外す設計判断が先。
