@@ -35,14 +35,35 @@ type railsModel struct {
 	class       string
 	parent      string
 	tableName   string // self.table_name 指定(無ければ空)
+	abstract    bool   // abstract_class = true / primary_abstract_class
 	assocs      []railsAssoc
 	hasCallback bool   // before_save / after_save / before_destroy 等を持つ
 	fileSrc     string // 定義ファイルの中身(callback の言及検査に使う)
 }
 
+// isARModel: 祖先を辿って ActiveRecord::Base / ApplicationRecord に到達する
+// クラスだけをモデル扱いする。`class Error < StandardError` のような PORO を
+// テーブルにしない(Mastodon 実測で幽霊テーブルが出た)。
+func isARModel(models map[string]*railsModel, class string) bool {
+	seen := map[string]bool{}
+	for c := class; !seen[c]; {
+		seen[c] = true
+		m, ok := models[c]
+		if !ok {
+			return false
+		}
+		if m.parent == "ApplicationRecord" || m.parent == "ActiveRecord::Base" {
+			return true
+		}
+		c = m.parent
+	}
+	return false
+}
+
 var (
-	reClass     = regexp.MustCompile(`^\s*class\s+([A-Z][A-Za-z0-9_]*)\s*<\s*([A-Z][A-Za-z0-9_:]*)`)
+	reClass     = regexp.MustCompile(`^\s*class\s+([A-Z][A-Za-z0-9_:]*)\s*<\s*([A-Z][A-Za-z0-9_:]*)`)
 	reTableName = regexp.MustCompile(`self\.table_name\s*=\s*["']([^"']+)["']`)
+	reAbstract  = regexp.MustCompile(`self\.abstract_class\s*=\s*true|primary_abstract_class`)
 	reAssoc     = regexp.MustCompile(`^\s*(belongs_to|has_many|has_one)\s+:(\w+)(.*)$`)
 	reClassName = regexp.MustCompile(`class_name:\s*["']([\w:]+)["']`)
 	reForeignKey = regexp.MustCompile(`foreign_key:\s*["':](\w+)["']?`)
@@ -89,9 +110,40 @@ func ScanRails(dir string) (*ScanResult, error) {
 	return railsToScan(dir, models), nil
 }
 
+// joinContinuations: 行末カンマ(や開き括弧)で折り返された宣言を 1 行に畳む。
+// Mastodon の belongs_to は
+//
+//	belongs_to :action_taken_by_account,
+//	           class_name: 'Account',
+//	           optional: true
+//
+// の形が多数派で、行単位の読みでは class_name を全部取りこぼす(実測)。
+func joinContinuations(src string) []string {
+	raw := strings.Split(src, "\n")
+	var out []string
+	var buf string
+	for _, line := range raw {
+		if buf != "" {
+			buf += " " + strings.TrimSpace(line)
+		} else {
+			buf = line
+		}
+		t := strings.TrimSpace(buf)
+		if strings.HasSuffix(t, ",") || strings.HasSuffix(t, "(") {
+			continue
+		}
+		out = append(out, buf)
+		buf = ""
+	}
+	if buf != "" {
+		out = append(out, buf)
+	}
+	return out
+}
+
 func parseRailsFile(src string, models map[string]*railsModel) {
 	var cur *railsModel
-	for _, line := range strings.Split(src, "\n") {
+	for _, line := range joinContinuations(src) {
 		if m := reClass.FindStringSubmatch(line); m != nil {
 			cur = &railsModel{class: m[1], parent: m[2], fileSrc: src}
 			models[m[1]] = cur
@@ -102,6 +154,9 @@ func parseRailsFile(src string, models map[string]*railsModel) {
 		}
 		if m := reTableName.FindStringSubmatch(line); m != nil {
 			cur.tableName = m[1]
+		}
+		if reAbstract.MatchString(line) {
+			cur.abstract = true
 		}
 		if reCallback.MatchString(line) {
 			cur.hasCallback = true
@@ -129,33 +184,47 @@ func parseRailsFile(src string, models map[string]*railsModel) {
 	}
 }
 
+// demodulize: "Doorkeeper::AccessToken" → "AccessToken"。
+// ActiveRecord の名前空間モデルの既定テーブル名は demodulize + tableize
+// (module 側の table_name_prefix は読まない割り切り)。
+func demodulize(class string) string {
+	if i := strings.LastIndex(class, "::"); i >= 0 {
+		return class[i+2:]
+	}
+	return class
+}
+
 // tableOf はモデルのテーブル名(STI は親のテーブル)。
+// abstract な親(ApplicationRecord 等)は STI の対象にしない — ここを貫通させると
+// 全モデルが application_records に融合する(Mastodon 実測)。
 func tableOf(models map[string]*railsModel, class string) string {
 	seen := map[string]bool{}
 	for c := class; ; {
 		m, ok := models[c]
 		if !ok || seen[c] {
-			return tableize(class)
+			return tableize(demodulize(class))
 		}
 		seen[c] = true
 		if m.tableName != "" {
 			return m.tableName
 		}
-		// STI: 親が別のモデルならそのテーブルに写る
-		if _, isModel := models[m.parent]; isModel {
+		if p, isModel := models[m.parent]; isModel && !p.abstract && m.parent != "ApplicationRecord" {
 			c, class = m.parent, m.parent
 			continue
 		}
-		return tableize(m.class)
+		return tableize(demodulize(m.class))
 	}
 }
 
 func railsToScan(dir string, models map[string]*railsModel) *ScanResult {
 	res := &ScanResult{Schema: "rails:" + filepath.Base(strings.TrimRight(dir, "/"))}
 	tables := map[string]bool{}
+	// AR の系譜に乗るクラスだけがモデル。abstract 基底はテーブルを持たない。
 	classes := make([]string, 0, len(models))
-	for c := range models {
-		classes = append(classes, c)
+	for c, m := range models {
+		if isARModel(models, c) && !m.abstract && c != "ApplicationRecord" {
+			classes = append(classes, c)
+		}
 	}
 	sort.Strings(classes)
 	for _, c := range classes {

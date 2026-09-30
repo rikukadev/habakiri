@@ -60,6 +60,27 @@ func TestScanRails(t *testing.T) {
 		}
 	})
 
+	t.Run("Mastodon 実測の回帰 4 種", func(t *testing.T) {
+		// (1) abstract 基底(ApplicationRecord)はテーブルにならない・STI で貫通しない
+		for _, tbl := range sc.Tables {
+			if tbl == "application_records" {
+				t.Error("abstract 基底がテーブルになっている")
+			}
+			// (2) 非 AR クラス(PORO)はテーブルにならない
+			if tbl == "api_errors" {
+				t.Error("StandardError 継承の PORO がテーブルになっている")
+			}
+		}
+		// (3) 複数行宣言の class_name を読める(comments→users が幽霊 authors にならない)
+		if _, ok := idx["comments→authors"]; ok {
+			t.Error("複数行の class_name を取りこぼして幽霊テーブルを作った")
+		}
+		// (4) 名前空間モデルは demodulize + tableize
+		if _, ok := idx["comments→access_grants"]; !ok {
+			t.Errorf("Doorkeeper::AccessGrant が demodulize されていない: %v", idx)
+		}
+	})
+
 	t.Run("STI は親のテーブルに写る", func(t *testing.T) {
 		for table := range idx {
 			if strings.Contains(table, "admin_users") {
