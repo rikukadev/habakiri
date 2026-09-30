@@ -179,11 +179,12 @@ func writeD2(w io.Writer, a *Analysis, cutLevel int) {
 			continue
 		}
 		seenSus[key] = true
-		cls, lbl := "suspectW", "疑い[弱]"
-		if s.Strong {
-			cls, lbl = "suspectS", "疑い[強]"
+		// [弱](メソッド参照)は図では省く — ノイズが利得を上回る(実測)。
+		// [強]もラベルは付けない: 線種(破線紫)と HTML の注で十分。
+		if !s.Strong {
+			continue
 		}
-		p(`%s -- %s: "%s" {class: [%s]}`, path[fn], path[tn], lbl, cls)
+		p(`%s -- %s: {class: [suspectS]}`, path[fn], path[tn])
 	}
 
 }

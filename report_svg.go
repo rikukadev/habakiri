@@ -14,7 +14,7 @@ import (
 	"io"
 
 	"oss.terrastruct.com/d2/d2graph"
-	"oss.terrastruct.com/d2/d2layouts/d2dagrelayout"
+	"oss.terrastruct.com/d2/d2layouts/d2elklayout"
 	"oss.terrastruct.com/d2/d2lib"
 	"oss.terrastruct.com/d2/d2renderers/d2svg"
 	"oss.terrastruct.com/d2/lib/log"
@@ -46,7 +46,7 @@ func renderD2(w io.Writer, script string) error {
 	renderOpts := &d2svg.RenderOpts{Pad: go2.Pointer(int64(20))}
 	diagram, _, err := d2lib.Compile(ctx, script, &d2lib.CompileOptions{
 		LayoutResolver: func(string) (d2graph.LayoutGraph, error) {
-			return d2dagrelayout.DefaultLayout, nil
+			return d2elklayout.DefaultLayout, nil
 		},
 		Ruler: ruler,
 	}, renderOpts)
