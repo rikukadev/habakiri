@@ -483,8 +483,22 @@ func WriteText(w io.Writer, a *Analysis) {
 	}
 
 	if a.Partition != nil && len(a.Partition.Groups) > 1 {
-		p("■ 分割案(Girvan–Newman + モジュラリティ Q=%.2f)— 大物 %d 個への分割",
+		p("■ 分割案(Girvan–Newman + モジュラリティ Q=%.2f)— 大物 %d 個への分割", 
 			a.Partition.Modularity, len(a.Partition.Groups))
+		if len(a.Partition.Levels) > 1 {
+			var ladder []string
+			for _, lv := range a.Partition.Levels {
+				var names []string
+				for _, gr := range lv.Groups {
+					names = append(names, fmt.Sprintf("%s(%d)", gr.Name, gr.Tables))
+				}
+				ladder = append(ladder, fmt.Sprintf("    %d 分割 Q=%.2f: %s", lv.K, lv.Modularity, strings.Join(names, " | ")))
+			}
+			p("  粒度の階段(--services N で選択。ちいさく割らない選択肢も見える):")
+			for _, l := range ladder {
+				p("%s", l)
+			}
+		}
 		for i, gr := range a.Partition.Groups {
 			hubs := ""
 			if len(gr.Hubs) > 0 {

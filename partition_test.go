@@ -76,6 +76,22 @@ func TestHubContractsAndPartition(t *testing.T) {
 		}
 	})
 
+	t.Run("粒度の階段と SelectLevel", func(t *testing.T) {
+		if len(a.Partition.Levels) < 2 {
+			t.Fatalf("階段が 1 段しかない: %+v", a.Partition.Levels)
+		}
+		for i := 1; i < len(a.Partition.Levels); i++ {
+			if a.Partition.Levels[i].K <= a.Partition.Levels[i-1].K {
+				t.Errorf("階段の K が昇順でない: %+v", a.Partition.Levels)
+			}
+		}
+		p := *a.Partition
+		p.SelectLevel(1)
+		if len(p.Groups) > 2 {
+			t.Errorf("SelectLevel(1) で粗い段が選ばれていない: %d groups", len(p.Groups))
+		}
+	})
+
 	t.Run("決定的(2 回実行で同一)", func(t *testing.T) {
 		b := Analyze(partitionFixture(), 5)
 		if !reflect.DeepEqual(a.Partition, b.Partition) {

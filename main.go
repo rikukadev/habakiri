@@ -40,6 +40,7 @@ func run() int {
 	svgCutOut := fs.String("svg-cut", "", "切った後の E-R 図をこのファイルへ書き出す(--cut-level のレベルまで切る)")
 	cutLevel := fs.Int("cut-level", 1, "切断レベル: 1=結果整合のみ(既定) / 2=存在保証込み / 3=最大分解")
 	svgPart := fs.String("svg-partition", "", "分割案の図(グループ = コンテナ)をこのファイルへ書き出す")
+	services := fs.Int("services", 0, "分割案のグループ数の希望(0 = モジュラリティ最大に任せる)")
 	d2Out := fs.String("d2", "", "D2 スクリプトをこのファイルへ書き出す(d2 out.d2 out.svg で描画)")
 	htmlOut := fs.String("html", "", "図と切断計画をまとめた自己完結 HTML をこのファイルへ書き出す")
 	hub := fs.Int("hub", 0, "hub 判定の次数閾値(0 = 自動: max(6, ノード数の 15%))")
@@ -108,6 +109,9 @@ func run() int {
 	}
 
 	a := Analyze(sc, *hub)
+	if *services > 0 && a.Partition != nil {
+		a.Partition.SelectLevel(*services)
+	}
 
 	writeFile := func(path string, write func(f *os.File)) bool {
 		if path == "" {

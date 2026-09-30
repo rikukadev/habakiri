@@ -17,6 +17,7 @@ package main
 import (
 	"math"
 	"sort"
+	"strings"
 )
 
 // ServiceGroup は分割案のコミュニティ 1 つ。
@@ -27,10 +28,50 @@ type ServiceGroup struct {
 	Hubs   []string `json:"hubs"`   // このコミュニティに落ちた hub(= 所有者)
 }
 
-// Partition は分割案全体。
+// Partition は分割案全体。Groups は選択中の段(既定 = Q 最大)。
+// Levels は粒度の階段 — Girvan–Newman のデンドログラムを吸着後処理まで
+// かけた各段で、粗い分割(2 個・3 個…)から細かい分割までを全部持つ。
 type Partition struct {
-	Groups     []ServiceGroup `json:"groups"`
+	Groups     []ServiceGroup   `json:"groups"`
+	Modularity float64          `json:"modularity"`
+	Levels     []PartitionLevel `json:"levels"`
+}
+
+// PartitionLevel は粒度 1 段(グループ数 K とその内容)。
+type PartitionLevel struct {
+	K          int            `json:"k"`
 	Modularity float64        `json:"modularity"`
+	Groups     []ServiceGroup `json:"groups"`
+}
+
+// SelectLevel は「N 個くらいに割りたい」に最も近い段を選ぶ
+// (|K-N| 最小、同点は Q が高い方 → K が小さい方)。
+func (pt *Partition) SelectLevel(n int) {
+	if len(pt.Levels) == 0 {
+		return
+	}
+	best := -1
+	for i, lv := range pt.Levels {
+		if best < 0 {
+			best = i
+			continue
+		}
+		b := pt.Levels[best]
+		di, db := abs(lv.K-n), abs(b.K-n)
+		if di < db || (di == db && (lv.Modularity > b.Modularity+1e-9 ||
+			(math.Abs(lv.Modularity-b.Modularity) <= 1e-9 && lv.K < b.K))) {
+			best = i
+		}
+	}
+	pt.Groups = pt.Levels[best].Groups
+	pt.Modularity = pt.Levels[best].Modularity
+}
+
+func abs(x int) int {
+	if x < 0 {
+		return -x
+	}
+	return x
 }
 
 type pgraph struct {
@@ -174,6 +215,9 @@ func components(nodes int, w map[[2]int]float64) []int {
 }
 
 // BuildPartition は分割案を計算する。
+// Girvan–Newman のデンドログラムから、成分数が増える各瞬間をスナップショットし、
+// それぞれに小コミュニティ吸着をかけて「粒度の階段」(Levels)を作る。
+// 既定の選択は吸着後モジュラリティ最大の段。
 func BuildPartition(a *Analysis) *Partition {
 	// ユニット一覧(hub 契約とブロック・島から確定)
 	unitTables := map[string]int{}
@@ -267,7 +311,6 @@ func BuildPartition(a *Analysis) *Partition {
 		g.addEdge(hc.Unit, hc.Hub, w)
 	}
 
-	// Girvan–Newman: betweenness 最大の辺を外しながら Q 最大の分割を探す
 	orig := map[[2]int]float64{}
 	for k, v := range g.w {
 		orig[k] = v
@@ -287,8 +330,20 @@ func BuildPartition(a *Analysis) *Partition {
 		cur[k] = v
 	}
 	n := len(nodes)
-	bestComp := components(n, cur)
-	bestQ := modularity(n, origKeys, orig, bestComp)
+
+	countComps := func(comp []int) int {
+		seen := map[int]bool{}
+		for _, c := range comp {
+			seen[c] = true
+		}
+		return len(seen)
+	}
+
+	// GN: 成分数が増える瞬間ごとにスナップショット(= デンドログラムの段)
+	var snapshots [][]int
+	initComp := components(n, cur)
+	snapshots = append(snapshots, initComp)
+	prevCount := countComps(initComp)
 	for len(cur) > 0 {
 		adj := make([][]int, n)
 		for k := range cur {
@@ -299,7 +354,6 @@ func BuildPartition(a *Analysis) *Partition {
 			sort.Ints(adj[i])
 		}
 		eb := edgeBetweenness(n, adj, cur)
-		// 最大 betweenness の辺(同点は辞書順)を除去
 		var target [2]int
 		best := -1.0
 		var keys [][2]int
@@ -319,18 +373,67 @@ func BuildPartition(a *Analysis) *Partition {
 		}
 		delete(cur, target)
 		comp := components(n, cur)
-		// 同点(±1e-9)は「より分離が進んだ側」を採用する。小さいグラフでは
-		// 正しい分割が同点 Q でしか現れないことがある(テストで実測)。
-		// 過分割に倒れても、後段の小コミュニティ吸着が回収する。
-		if q := modularity(n, origKeys, orig, comp); q > bestQ-1e-9 {
-			bestQ, bestComp = math.Max(q, bestQ), comp
+		if c := countComps(comp); c > prevCount {
+			snapshots = append(snapshots, comp)
+			prevCount = c
 		}
 	}
 
-	// 小コミュニティの吸着。モジュラリティ最大化は resolution limit のため
-	// 弱結合の衛星(1〜2 テーブル)を独立させがちなので、規定サイズ未満の
-	// コミュニティは「元グラフでの総結合重みが最大のコミュニティ」へ編入する。
-	// 同点は相手コミュニティのテーブル数が大きい方 → 代表ノード辞書順。
+	// 各スナップショットに吸着をかけ、粒度の階段を作る(重複段は畳む)
+	pt := &Partition{}
+	seenSig := map[string]bool{}
+	for _, snap := range snapshots {
+		comp := absorbSmall(append([]int(nil), snap...), n, nodes, hubDeg, unitTables, origKeys, orig)
+		groups := buildGroups(comp, nodes, hubDeg, unitTables)
+		sig := ""
+		for _, gr := range groups {
+			sig += gr.Name + "|" + strings.Join(gr.Units, ",") + ";"
+		}
+		if seenSig[sig] {
+			continue
+		}
+		seenSig[sig] = true
+		pt.Levels = append(pt.Levels, PartitionLevel{
+			K:          len(groups),
+			Modularity: modularity(n, origKeys, orig, comp),
+			Groups:     groups,
+		})
+	}
+	// 同じ K の段は最高 Q のものだけ残す(選択肢としては同粒度の別解だが、
+	// 階段の一覧性を優先する)。
+	bestAtK := map[int]int{}
+	for i, lv := range pt.Levels {
+		if j, ok := bestAtK[lv.K]; !ok || lv.Modularity > pt.Levels[j].Modularity+1e-9 {
+			bestAtK[lv.K] = i
+		}
+	}
+	var kept []PartitionLevel
+	for i, lv := range pt.Levels {
+		if bestAtK[lv.K] == i {
+			kept = append(kept, lv)
+		}
+	}
+	pt.Levels = kept
+	sort.SliceStable(pt.Levels, func(i, j int) bool { return pt.Levels[i].K < pt.Levels[j].K })
+
+	// 既定 = 吸着後モジュラリティ最大の段(同点はより分離が進んだ段)
+	best := 0
+	for i, lv := range pt.Levels {
+		if lv.Modularity > pt.Levels[best].Modularity+1e-9 ||
+			(math.Abs(lv.Modularity-pt.Levels[best].Modularity) <= 1e-9 && lv.K > pt.Levels[best].K) {
+			best = i
+		}
+	}
+	if len(pt.Levels) > 0 {
+		pt.Groups = pt.Levels[best].Groups
+		pt.Modularity = pt.Levels[best].Modularity
+	}
+	return pt
+}
+
+// absorbSmall: 規定サイズ未満のコミュニティを最強結合先へ編入する(決定的)。
+func absorbSmall(bestComp []int, n int, nodes []string, hubDeg map[string]int,
+	unitTables map[string]int, origKeys [][2]int, orig map[[2]int]float64) []int {
 	const smallGroupMax = 3 // このテーブル数未満は独立サービスにしない
 	for {
 		compTables := map[int]int{}
@@ -339,7 +442,6 @@ func BuildPartition(a *Analysis) *Partition {
 				compTables[bestComp[i]] += unitTables[name]
 			}
 		}
-		// 吸着対象: 最小の小コミュニティ(決定的に 1 個ずつ処理)
 		small, smallT := -1, smallGroupMax
 		var cids []int
 		for c := range compTables {
@@ -354,7 +456,6 @@ func BuildPartition(a *Analysis) *Partition {
 		if small < 0 {
 			break
 		}
-		// 元グラフでの総結合重みが最大の相手を探す
 		gain := map[int]float64{}
 		for _, k := range origKeys {
 			wt := orig[k]
@@ -378,7 +479,6 @@ func BuildPartition(a *Analysis) *Partition {
 			}
 		}
 		if target < 0 {
-			// どこにも繋がっていない孤立コミュニティ: 便宜的に最大コミュニティへ
 			for _, c := range cids {
 				if c != small && (target < 0 || compTables[c] > compTables[target]) {
 					target = c
@@ -394,11 +494,14 @@ func BuildPartition(a *Analysis) *Partition {
 			}
 		}
 	}
+	return bestComp
+}
 
-	// コミュニティ → ServiceGroup
+// buildGroups: コミュニティ割当 → ServiceGroup 一覧(決定的な順序)。
+func buildGroups(comp []int, nodes []string, hubDeg map[string]int, unitTables map[string]int) []ServiceGroup {
 	groups := map[int]*ServiceGroup{}
 	for i, name := range nodes {
-		c := bestComp[i]
+		c := comp[i]
 		sg, ok := groups[c]
 		if !ok {
 			sg = &ServiceGroup{}
@@ -411,30 +514,28 @@ func BuildPartition(a *Analysis) *Partition {
 			sg.Tables += unitTables[name]
 		}
 	}
-	part := &Partition{Modularity: bestQ}
+	var out []ServiceGroup
 	for _, sg := range groups {
 		sort.Strings(sg.Hubs)
-		// 名前 = 最大ユニット(同数なら辞書順)
 		sort.Slice(sg.Units, func(i, j int) bool {
 			if unitTables[sg.Units[i]] != unitTables[sg.Units[j]] {
 				return unitTables[sg.Units[i]] > unitTables[sg.Units[j]]
 			}
 			return sg.Units[i] < sg.Units[j]
 		})
-		// hub を所有するグループは「<hub>圏」— 実態を表す名前になる
-		// (最大ユニット名だと bulk_import_rows 圏 accounts のような誤解を生む)。
+		// hub を所有するグループは「<hub>圏」— 実態を表す名前になる。
 		if len(sg.Hubs) > 0 {
 			sg.Name = sg.Hubs[0] + " 圏"
 		} else if len(sg.Units) > 0 {
 			sg.Name = sg.Units[0]
 		}
-		part.Groups = append(part.Groups, *sg)
+		out = append(out, *sg)
 	}
-	sort.Slice(part.Groups, func(i, j int) bool {
-		if part.Groups[i].Tables != part.Groups[j].Tables {
-			return part.Groups[i].Tables > part.Groups[j].Tables
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Tables != out[j].Tables {
+			return out[i].Tables > out[j].Tables
 		}
-		return part.Groups[i].Name < part.Groups[j].Name
+		return out[i].Name < out[j].Name
 	})
-	return part
+	return out
 }
