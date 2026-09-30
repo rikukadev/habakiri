@@ -174,6 +174,10 @@ func ScanYii1(dir string) (*ScanResult, error) {
 			res.Notes = append(res.Notes, fmt.Sprintf("yii1: 読んだモデル %d 個 — %s", len(models), strings.Join(parts, " / ")))
 		}
 	}
+	res.ModelClasses = map[string]string{}
+	for c, m := range models {
+		res.ModelClasses[c] = m.tableName
+	}
 	res.FileTables = map[string]string{}
 	for _, m := range models {
 		if m.path != "" {
@@ -872,7 +876,7 @@ func yiiDiscover(dir string, files []string, prefix string) (*yiiDiscovery, erro
 		}
 		sort.Strings(parts)
 		d.notes = append(d.notes, fmt.Sprintf(
-			"[判定不能] relations() の宣言をループで組み立てる(メタデータ等から実行時に作る)— 書かれている宣言だけを読んだ。組み立てる分は見えないが、無いことの確認ではない: %s",
+			"[判定不能] relations() の宣言をループで組み立てる(メタデータ等から実行時に作る)— 書かれている宣言だけを読んだ。組み立てる分は見えないが、無いことの確認ではない(組み立てる元のメタデータは --relations で一覧として渡せる): %s",
 			strings.Join(parts, ", ")))
 	}
 	if skippedN := func() int {

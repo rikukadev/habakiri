@@ -35,6 +35,7 @@ $ habakiri --dsn "..." --yii1 /path/to/yii1app            # 併用: DB の FK �
 | `--svg` / `--svg-cut` / `--svg-partition` | E-R 図(切る前 / 切った後 / 分割案) |
 | `--cut-level 1..3` | 切った後の図の深さ(既定 1) |
 | `--html` | 全図 + 全表の自己完結 1 ファイル(CDN/JS 依存なし) |
+| `--relations FILE` | メタデータの関係一覧(TSV: `子<TAB>列<TAB>親`)。関連を実行時にメタデータから組み立てるアプリ向け。子と親はテーブル名か静的ソースのモデルのクラス名。ツールはアプリ固有の読み方を持たず一覧を読むだけで、一覧は SQL の結果・シードデータなどから使う側が作る。証拠は `logical:metadata` として ORM の宣言と分けて数える |
 | `--cooc FILE` | 同一 tx 書き込み共起のログ(MySQL general log / Postgres log_statement=all / 1 行 1 tx の中立形式を自動判別) |
 | `--baseline FILE` | 過去の `--json` と比較し、結合の逆行(新規 FK ペア・hub 契約増・跨ぎ FK 増)で exit 3 — CI に置く計器。**比較は静的エッジのみ**(共起はサンプリング依存で揺れるため対象外) |
 | `--cooc-weight=false` | 共起を分割グラフに算入しない(レポートのみ。CI の静的モード) |
@@ -52,7 +53,7 @@ FK が部分的にしか張られていない DB では、DB だけ読むと未�
 | 用語 | 定義 |
 |---|---|
 | **Physical** | DB スキーマから得た物理 FK のみ。DB が制約を強制している |
-| **Logical** | ORM の宣言(Yii1 `relations()` / Rails associations)から得た関係のみ。物理 FK の存在を意味しない |
+| **Logical** | ORM の宣言(Yii1 `relations()` / Rails associations)と、`--relations` のメタデータの関係一覧から得た関係。物理 FK の存在を意味しない |
 | **Combined** | Physical + Logical の統合。同じ関係(子テーブル・子の列・親テーブルが一致)は FK 1 本に証拠が 2 件付くだけで、重みは加算しない。属性は DB の値を優先 |
 | **Observed** | `--cooc` の実行時観測。FK とは別の証拠として扱う |
 
