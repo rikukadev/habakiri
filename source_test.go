@@ -186,4 +186,11 @@ func TestInflector(t *testing.T) {
 	if classify("order_items") != "OrderItem" {
 		t.Errorf("classify(order_items) = %s", classify("order_items"))
 	}
+	// -us 語尾は単数のまま(Mastodon の belongs_to :status で statu 幽霊が出た)
+	if classify("status") != "Status" || classify("statuses") != "Status" {
+		t.Errorf("classify(status)=%s classify(statuses)=%s", classify("status"), classify("statuses"))
+	}
+	if tableize("Status") != "statuses" {
+		t.Errorf("tableize(Status) = %s", tableize("Status"))
+	}
 }
