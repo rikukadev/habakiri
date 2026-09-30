@@ -29,10 +29,10 @@ func WriteSVG(w io.Writer, a *Analysis) error {
 	return renderD2(w, script.String())
 }
 
-// WriteSVGCut は「切った後」の図(橋を除去した世界)を書き出す。
-func WriteSVGCut(w io.Writer, a *Analysis) error {
+// WriteSVGLevel は「レベル L まで切った後」の図を書き出す。
+func WriteSVGLevel(w io.Writer, a *Analysis, level int) error {
 	var script bytes.Buffer
-	WriteD2Cut(&script, a)
+	WriteD2Level(&script, a, level)
 	return renderD2(w, script.String())
 }
 
