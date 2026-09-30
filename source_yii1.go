@@ -7,6 +7,11 @@
 // 実務のカスケードは beforeDelete() の手書き削除に現れるので、
 // callback を持つモデルの他モデル言及は注記として出す(エッジにはしない)。
 // DB スキャンとの併用を推奨。
+//
+// テーブル名は Yii1 と同じ規則: tableName() の {{name}} には設定ファイル
+// (protected/config/main.php)の tablePrefix を前置し、直書きの名前はそのまま。
+// モデルは protected 配下の models ディレクトリを全部読む(modules/*/models を含む)。
+// 相手のモデルが見つからない関連は FK にしない(クラス名をテーブル名にしない)。
 package main
 
 import (
@@ -42,32 +47,68 @@ var (
 	reYiiCb    = regexp.MustCompile(`function\s+(beforeSave|afterSave|beforeDelete|afterDelete|beforeValidate|afterValidate|beforeFind|afterFind|afterConstruct|behaviors)\s*\(`)
 )
 
-// yiiTableName は {{x}} / tbl_x の表記ゆれを剥がす。
-func yiiTableName(raw string) string {
+// reYiiTablePrefix: 設定ファイルの db コンポーネントの 'tablePrefix' => 'tbl_'。
+var reYiiTablePrefix = regexp.MustCompile(`['"]tablePrefix['"]\s*=>\s*['"]([^'"]*)['"]`)
+
+// yiiTableName は {{x}} を剥がし、tablePrefix を前置する(Yii1 の CDbConnection と
+// 同じく、{{}} で書かれた名前にだけ付ける。tbl_x の直書きはそのまま)。
+func yiiTableName(raw, prefix string) string {
 	s := strings.TrimSpace(raw)
-	s = strings.TrimPrefix(s, "{{")
-	s = strings.TrimSuffix(s, "}}")
+	if strings.HasPrefix(s, "{{") && strings.HasSuffix(s, "}}") {
+		return prefix + strings.TrimSuffix(strings.TrimPrefix(s, "{{"), "}}")
+	}
 	return s
+}
+
+// yiiLayout は Yii1 アプリの読み取り範囲。protected が分かればその配下の
+// models ディレクトリを全部読み、設定ファイルも探す。分からなければ dir 直下だけ。
+func yiiLayout(dir string) (protected, modelsDir string) {
+	for _, cand := range []string{filepath.Join(dir, "protected"), dir} {
+		if fi, err := os.Stat(filepath.Join(cand, "models")); err == nil && fi.IsDir() {
+			return cand, ""
+		}
+	}
+	return "", dir
+}
+
+// yiiReadPrefix は設定ファイルの tablePrefix を読む(無ければ空)。
+func yiiReadPrefix(protected string) string {
+	if protected == "" {
+		return ""
+	}
+	raw, err := os.ReadFile(filepath.Join(protected, "config", "main.php"))
+	if err != nil {
+		return ""
+	}
+	if m := reYiiTablePrefix.FindSubmatch(raw); m != nil {
+		return string(m[1])
+	}
+	return ""
 }
 
 // ScanYii1 は Yii1 アプリ(protected/models など)を読む。
 func ScanYii1(dir string) (*ScanResult, error) {
-	modelsDir := dir
-	for _, cand := range []string{filepath.Join(dir, "protected", "models"), filepath.Join(dir, "models")} {
-		if fi, err := os.Stat(cand); err == nil && fi.IsDir() {
-			modelsDir = cand
-			break
-		}
+	protected, modelsDir := yiiLayout(dir)
+	prefix := yiiReadPrefix(protected)
+	walkRoot := modelsDir
+	if protected != "" {
+		walkRoot = protected
+		modelsDir = filepath.Join(protected, "models")
 	}
 
 	var files []string
-	err := filepath.WalkDir(modelsDir, func(path string, d os.DirEntry, err error) error {
+	err := filepath.WalkDir(walkRoot, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if !d.IsDir() && strings.HasSuffix(path, ".php") {
-			files = append(files, path)
+		if d.IsDir() || !strings.HasSuffix(path, ".php") {
+			return nil
 		}
+		// protected 配下では models ディレクトリの中だけ(modules/*/models を含む)
+		if protected != "" && !strings.Contains(filepath.ToSlash(path), "/models/") {
+			return nil
+		}
+		files = append(files, path)
 		return nil
 	})
 	if err != nil {
@@ -79,6 +120,7 @@ func ScanYii1(dir string) (*ScanResult, error) {
 	sort.Strings(files)
 
 	models := map[string]*yiiModel{}
+	var dupes []string
 	for _, f := range files {
 		raw, err := os.ReadFile(f)
 		if err != nil {
@@ -89,9 +131,15 @@ func ScanYii1(dir string) (*ScanResult, error) {
 		if cm == nil {
 			continue
 		}
+		if prev, dup := models[cm[1]]; dup {
+			// Yii1 のクラス名はグローバル。同名が 2 つあると実行時にどちらかしか
+			// 読まれない。先に見つけた方(パス順)を採り、注記する。
+			dupes = append(dupes, fmt.Sprintf("%s(%s と %s)", cm[1], sourceOrigin(dir, prev.path, 0), sourceOrigin(dir, f, 0)))
+			continue
+		}
 		m := &yiiModel{class: cm[1], tableName: cm[1], fileSrc: src, path: f}
 		if tm := reYiiTable.FindStringSubmatch(src); tm != nil {
-			m.tableName = yiiTableName(tm[1])
+			m.tableName = yiiTableName(tm[1], prefix)
 		}
 		for _, loc := range reYiiRel.FindAllStringSubmatchIndex(src, -1) {
 			m.relations = append(m.relations, yiiRelation{
@@ -105,7 +153,14 @@ func ScanYii1(dir string) (*ScanResult, error) {
 		return nil, fmt.Errorf("%s に CActiveRecord 系のモデルが見つかりません", modelsDir)
 	}
 
-	res := yiiToScan(dir, models)
+	res := yiiToScan(dir, models, prefix)
+	if prefix != "" {
+		res.Notes = append(res.Notes, fmt.Sprintf(
+			"yii1 設定の tablePrefix %q を {{...}} で書かれたテーブル名に前置した(protected/config/main.php)", prefix))
+	}
+	if len(dupes) > 0 {
+		res.Notes = append(res.Notes, "yii1: 同名のモデルクラスが複数ある — パス順で先のものを採った: "+strings.Join(dupes, ", "))
+	}
 	res.FileTables = map[string]string{}
 	for _, m := range models {
 		if m.path != "" {
@@ -115,7 +170,7 @@ func ScanYii1(dir string) (*ScanResult, error) {
 	return res, nil
 }
 
-func yiiToScan(dir string, models map[string]*yiiModel) *ScanResult {
+func yiiToScan(dir string, models map[string]*yiiModel, prefix string) *ScanResult {
 	res := &ScanResult{Schema: "yii1:" + filepath.Base(strings.TrimRight(dir, "/"))}
 	tables := map[string]bool{}
 	classes := make([]string, 0, len(models))
@@ -125,20 +180,27 @@ func yiiToScan(dir string, models map[string]*yiiModel) *ScanResult {
 	}
 	sort.Strings(classes)
 
-	tableOf := func(class string) string {
+	// tableOf は相手モデルのテーブル名。見つからなければ ok=false —
+	// クラス名をテーブル名にすると、読めていないモジュールや拡張のモデルが
+	// 実在しないテーブル(User 等)への偽の関係になる。
+	tableOf := func(class string) (string, bool) {
 		if m, ok := models[class]; ok {
-			return m.tableName
+			return m.tableName, true
 		}
-		return class // モデルが見つからなければクラス名をそのまま(Yii1 の既定と同じ)
+		return "", false
+	}
+	var unresolved []string
+	unknown := func(cc string, r yiiRelation) {
+		unresolved = append(unresolved, fmt.Sprintf("%s.%s → %s", cc, r.name, r.target))
 	}
 
 	// BELONGS_TO と HAS_MANY/HAS_ONE は同じエッジの両側宣言なので、child+parent+cols で重複排除。
 	// 両側の宣言はどちらも同じ関係の証拠なので、FK は 1 本のまま Evidence を足す。
 	seen := map[string]int{} // key → res.FKs の位置
+	// 自己参照(parent_id の木構造など)も作る。DB スキャンは自己参照 FK を持つので、
+	// 捨てると Edge Diff で「DB にだけある関係」に見える。分割に効かないのは
+	// グラフ層(BuildEdges)が落とすため。
 	addFK := func(child, parent string, cols []string, constraint string, m *yiiModel, r yiiRelation) {
-		if child == parent {
-			return
-		}
 		ev := Evidence{Source: SourceYii1, Origin: sourceOrigin(dir, m.path, r.line),
 			Constraint: constraint, DeleteRule: "NO ACTION", Nullable: NullableUnknown}
 		key := child + "\x00" + parent + "\x00" + strings.Join(cols, ",")
@@ -170,10 +232,20 @@ func yiiToScan(dir string, models map[string]*yiiModel) *ScanResult {
 		for _, r := range m.relations {
 			switch r.kind {
 			case "BELONGS_TO":
-				addFK(m.tableName, tableOf(r.target), splitCols(r.fkSpec),
+				target, ok := tableOf(r.target)
+				if !ok {
+					unknown(cc, r)
+					continue
+				}
+				addFK(m.tableName, target, splitCols(r.fkSpec),
 					fmt.Sprintf("yii1:%s→%s", cc, r.target), m, r)
 			case "HAS_MANY", "HAS_ONE":
-				addFK(tableOf(r.target), m.tableName, splitCols(r.fkSpec),
+				target, ok := tableOf(r.target)
+				if !ok {
+					unknown(cc, r)
+					continue
+				}
+				addFK(target, m.tableName, splitCols(r.fkSpec),
 					fmt.Sprintf("yii1:%s→%s", r.target, cc), m, r)
 			case "MANY_MANY":
 				mm := reYiiMM.FindStringSubmatch(r.fkSpec)
@@ -182,10 +254,16 @@ func yiiToScan(dir string, models map[string]*yiiModel) *ScanResult {
 						fmt.Sprintf("%s の MANY_MANY '%s' が 'join(col1, col2)' 形式でない — 読めなかった", cc, r.fkSpec))
 					continue
 				}
-				join := yiiTableName(mm[1])
-				// 中間テーブルから両側への FK を合成する
+				join := yiiTableName(mm[1], prefix)
+				// 中間テーブルから両側への FK を合成する。相手が見つからなければ
+				// 自分の側だけ(中間テーブルとこのモデルの関係は宣言から確か)
 				addFK(join, m.tableName, []string{mm[2]}, fmt.Sprintf("yii1:%s(mm)", join), m, r)
-				addFK(join, tableOf(r.target), []string{mm[3]}, fmt.Sprintf("yii1:%s(mm)", join), m, r)
+				target, ok := tableOf(r.target)
+				if !ok {
+					unknown(cc, r)
+					continue
+				}
+				addFK(join, target, []string{mm[3]}, fmt.Sprintf("yii1:%s(mm)", join), m, r)
 			}
 		}
 	}
@@ -193,6 +271,11 @@ func yiiToScan(dir string, models map[string]*yiiModel) *ScanResult {
 	tableSet := map[string]bool{}
 	for t := range tables {
 		tableSet[t] = true
+	}
+	if len(unresolved) > 0 {
+		res.Notes = append(res.Notes, fmt.Sprintf(
+			"[判定不能] 相手のモデルが見つからない関連 %d 件は FK にしていない(読めていないモジュール・拡張のモデル等。クラス名をテーブル名にすると偽の関係になる): %s",
+			len(unresolved), strings.Join(unresolved, ", ")))
 	}
 
 	// 手書きカスケード: beforeDelete / afterDelete の本文内の削除呼び出し。
@@ -223,8 +306,10 @@ func yiiToScan(dir string, models map[string]*yiiModel) *ScanResult {
 			var names []string
 			for t := range targets {
 				names = append(names, t)
-				res.Suspects = append(res.Suspects, Suspect{
-					FromTable: m.tableName, ToTable: tableOf(t), Strong: true})
+				if tt, ok := tableOf(t); ok {
+					res.Suspects = append(res.Suspects, Suspect{
+						FromTable: m.tableName, ToTable: tt, Strong: true})
+				}
 			}
 			sort.Strings(names)
 			res.Notes = append(res.Notes, fmt.Sprintf(
@@ -252,8 +337,10 @@ func yiiToScan(dir string, models map[string]*yiiModel) *ScanResult {
 			for _, r := range m.relations {
 				if r.name == n && r.target != cc {
 					hits = append(hits, r.target)
-					res.Suspects = append(res.Suspects, Suspect{
-						FromTable: m.tableName, ToTable: tableOf(r.target), Strong: false})
+					if tt, ok := tableOf(r.target); ok {
+						res.Suspects = append(res.Suspects, Suspect{
+							FromTable: m.tableName, ToTable: tt, Strong: false})
+					}
 				}
 			}
 		}
@@ -292,8 +379,9 @@ func yiiToScan(dir string, models map[string]*yiiModel) *ScanResult {
 		}
 		sort.Strings(mentions)
 		for _, mc := range mentions {
+			tt, _ := tableOf(mc) // mentions は models にあるクラスだけ
 			res.Suspects = append(res.Suspects, Suspect{
-				FromTable: m.tableName, ToTable: tableOf(mc), Strong: reYiiCb.MatchString(m.fileSrc)})
+				FromTable: m.tableName, ToTable: tt, Strong: reYiiCb.MatchString(m.fileSrc)})
 		}
 		if reYiiCb.MatchString(m.fileSrc) {
 			strongNotes = append(strongNotes,
@@ -312,6 +400,10 @@ func yiiToScan(dir string, models map[string]*yiiModel) *ScanResult {
 		m := models[cc]
 		var hits []string
 		for _, t := range extractRawWriteTables(m.fileSrc) {
+			// {{user}} は抽出時に剥がれているので、接頭辞付きの名前でも引く
+			if !tableSet[t] && prefix != "" && tableSet[prefix+t] {
+				t = prefix + t
+			}
 			if t == m.tableName || !tableSet[t] {
 				continue // 自分自身と、モデルに対応しないテーブル名(誤爆)は除く
 			}
@@ -332,5 +424,9 @@ func yiiToScan(dir string, models map[string]*yiiModel) *ScanResult {
 		res.Tables = append(res.Tables, t)
 	}
 	sort.Strings(res.Tables)
+	// Yii1 では関連の相手は必ず読んだモデル(見つからない相手は FK にしない)で、
+	// MANY_MANY の中間テーブルも宣言が構造を言っている。Tables がそのまま
+	// 「定義を読んだ範囲」になる。
+	res.ModelTables = append([]string(nil), res.Tables...)
 	return res
 }

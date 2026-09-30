@@ -134,11 +134,19 @@ func MergeScans(phys, logic *ScanResult) *ScanResult {
 	var missing []string
 	matched := 0
 	rename := map[string]string{}
+	modelTables := map[string]bool{}
+	if logic.ModelTables != nil {
+		for _, t := range logic.ModelTables {
+			modelTables[t] = true
+		}
+	}
 	for _, t := range logic.Tables {
 		db, ok := r.resolve(t)
 		rename[t] = db
 		tables[db] = true
-		res.LogicalTables = append(res.LogicalTables, db)
+		if logic.ModelTables == nil || modelTables[t] {
+			res.LogicalTables = append(res.LogicalTables, db)
+		}
 		if ok {
 			matched++
 		} else {
@@ -165,10 +173,11 @@ func MergeScans(phys, logic *ScanResult) *ScanResult {
 		res.FKs = append(res.FKs, fk)
 	}
 	for _, fk := range logic.FKs {
+		selfRef := fk.ChildTable == fk.ParentTable
 		fk.ChildTable, fk.ParentTable = name(fk.ChildTable), name(fk.ParentTable)
 		fk.Evidences = append([]Evidence(nil), fk.Evidences...)
-		if fk.ChildTable == fk.ParentTable {
-			continue // 名前の写しで自己参照になったもの(静的ソース側は元から作らない)
+		if !selfRef && fk.ChildTable == fk.ParentTable {
+			continue // 名前の写しで自己参照になってしまったもの(元の宣言は自己参照ではない)
 		}
 		key := relationKey(fk)
 		if i, ok := index[key]; ok {
