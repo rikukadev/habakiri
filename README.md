@@ -8,8 +8,8 @@
 
 モノリスのデータ切り出しで「どこから手を付けるか」を、スキーマだけを材料に提案する。
 
-読み取り専用。information_schema しか見ない。v1 は MySQL 専用
-(Postgres は best-effort で後回し。追加時は pg_catalog を読むこと)。
+読み取り専用。MySQL は information_schema、Postgres は pg_catalog しか見ない。
+DSN のスキーム(`postgres://`)で自動判別する。
 
 ## インストール
 
@@ -20,8 +20,12 @@ $ go install github.com/rikukadev/habakiri@latest
 ## 使い方
 
 ```console
-$ habakiri --dsn "user:pass@tcp(127.0.0.1:3306)/mydb" [--hub N] [--json] [--mermaid out.mmd]
+$ habakiri --dsn "user:pass@tcp(127.0.0.1:3306)/mydb" [--hub N] [--json] [--mermaid out.mmd]   # MySQL
+$ habakiri --dsn "postgres://user:pass@127.0.0.1:5432/mydb"                                     # Postgres
 ```
+
+Postgres の対象は `current_schema()`(通常 public)。別スキーマは DSN の
+`?search_path=...` で切り替える。
 
 DSN は環境変数 `HABAKIRI_DSN` でも渡せる(パスワードをシェル履歴に残さないため)。
 
