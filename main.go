@@ -21,7 +21,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
-var version = "0.2.0"
+var version = "0.3.0"
 
 func main() {
 	os.Exit(run())
