@@ -82,6 +82,40 @@ func TestScanRails(t *testing.T) {
 		}
 	})
 
+	t.Run("concern の関連宣言と callback が include 先へ伝播する", func(t *testing.T) {
+		// Indexable(module)の has_many :index_entries, dependent: :destroy が
+		// User に伝播 → IndexEntry の belongs_to :user が CASCADE に昇格する
+		fk, ok := idx["index_entries(user_id)→users"]
+		if !ok {
+			t.Fatalf("concern 内の関連が読めていない: %v", idx)
+		}
+		if fk.DeleteRule != "CASCADE" {
+			t.Errorf("concern の dependent: が CASCADE に写っていない: %s", fk.DeleteRule)
+		}
+		// after_create_commit(shorthand)+ concern 経由の SearchEntry 言及 → [強]
+		found := false
+		for _, n := range sc.Notes {
+			if strings.Contains(n, "[強] User") && strings.Contains(n, "SearchEntry") {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("concern 経由の callback 言及が [強] 注記に無い: %v", sc.Notes)
+		}
+	})
+
+	t.Run("メソッドのみの宣言外言及は [弱] 注記", func(t *testing.T) {
+		found := false
+		for _, n := range sc.Notes {
+			if strings.Contains(n, "[弱] Category") && strings.Contains(n, "Post") {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("メソッド言及の [弱] 注記が無い: %v", sc.Notes)
+		}
+	})
+
 	t.Run("with_options のオプションがブロック内の宣言に効く", func(t *testing.T) {
 		fk, ok := idx["posts(edited_by_id)→users"]
 		if !ok {

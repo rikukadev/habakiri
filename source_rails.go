@@ -37,8 +37,18 @@ type railsModel struct {
 	tableName   string // self.table_name 指定(無ければ空)
 	abstract    bool   // abstract_class = true / primary_abstract_class
 	assocs      []railsAssoc
-	hasCallback bool   // before_save / after_save / before_destroy 等を持つ
-	fileSrc     string // 定義ファイルの中身(callback の言及検査に使う)
+	hasCallback bool     // before_save / after_commit 等を持つ
+	includes    []string // include した concern 名(callback と言及をここから伝播)
+	fileSrc     string   // 定義ファイルの中身(宣言外言及の検査に使う)
+}
+
+// railsConcern は app/models/concerns 等の module。Mastodon はモデルの callback の
+// 本体をほぼ concern に置くので、include 先のモデルへ伝播させないと素通しになる。
+type railsConcern struct {
+	name        string
+	hasCallback bool
+	fileSrc     string
+	assocs      []railsAssoc // concern 内の belongs_to / has_many(included do の中)
 }
 
 // isARModel: 祖先を辿って ActiveRecord::Base / ApplicationRecord に到達する
@@ -69,7 +79,11 @@ var (
 	reForeignKey = regexp.MustCompile(`foreign_key:\s*["':](\w+)["']?`)
 	reDependent = regexp.MustCompile(`dependent:\s*:(destroy_async|destroy|delete_all)`)
 	reAs        = regexp.MustCompile(`\bas:\s*:(\w+)`)
-	reCallback  = regexp.MustCompile(`^\s*(before|after|around)_(save|create|update|destroy|commit|validation)\b`)
+	// ライフサイクル hook の全形。after_create_commit 等の shorthand(Rails 5+)は
+	// 後置の _commit まで取らないと \b で弾かれてすべて素通しになる(実測)。
+	reCallback  = regexp.MustCompile(`^\s*(before|after|around)_(save|create|update|destroy|commit|rollback|validation|touch|find|initialize)(_commit)?\b`)
+	reModule    = regexp.MustCompile(`^\s*module\s+([A-Z][A-Za-z0-9_:]*)`)
+	reInclude   = regexp.MustCompile(`^\s*include\s+([A-Z][A-Za-z0-9_:]+)\s*$`)
 	reConst     = regexp.MustCompile(`\b([A-Z][A-Za-z0-9]+)\b`)
 	// with_options のオプションはブロック内の全宣言に効く(Mastodon が多用する形)。
 	reWithOptions = regexp.MustCompile(`^\s*with_options\s+(.+?)\s+do\s*(\|[^|]*\|)?\s*$`)
@@ -103,12 +117,30 @@ func ScanRails(dir string) (*ScanResult, error) {
 	sort.Strings(files)
 
 	models := map[string]*railsModel{}
+	concerns := map[string]*railsConcern{}
 	for _, f := range files {
 		raw, err := os.ReadFile(f)
 		if err != nil {
 			return nil, err
 		}
-		parseRailsFile(string(raw), models)
+		parseRailsFile(string(raw), models, concerns)
+	}
+
+	// concern の中身(関連宣言・callback・言及)を include 先のモデルへ伝播する。
+	// Mastodon は Account の関連の大半を concern の included do に置くので、
+	// これをやらないと FK ごと素通しになる(実測)。
+	for _, m := range models {
+		for _, inc := range m.includes {
+			c, ok := concerns[inc]
+			if !ok {
+				continue
+			}
+			m.assocs = append(m.assocs, c.assocs...)
+			if c.hasCallback {
+				m.hasCallback = true
+			}
+			m.fileSrc += "\n" + c.fileSrc
+		}
 	}
 
 	return railsToScan(dir, models), nil
@@ -145,8 +177,9 @@ func joinContinuations(src string) []string {
 	return out
 }
 
-func parseRailsFile(src string, models map[string]*railsModel) {
+func parseRailsFile(src string, models map[string]*railsModel, concerns map[string]*railsConcern) {
 	var cur *railsModel
+	var curConcern *railsConcern
 	// with_options ブロックのオプションを積む。ブロック境界は do/end の
 	// 近似追跡(モデルファイルの平坦な構造が前提の割り切り)。
 	var optStack []string
@@ -157,7 +190,16 @@ func parseRailsFile(src string, models map[string]*railsModel) {
 			optStack = optStack[:0]
 			continue
 		}
-		if cur == nil {
+		// class より前の module 行 = concern(名前空間モデルのファイルでは
+		// class 行が現れた時点で以降は class に付く)。
+		if cur == nil && curConcern == nil {
+			if m := reModule.FindStringSubmatch(line); m != nil {
+				curConcern = &railsConcern{name: m[1], fileSrc: src}
+				concerns[m[1]] = curConcern
+				continue
+			}
+		}
+		if cur == nil && curConcern == nil {
 			continue
 		}
 		switch {
@@ -170,14 +212,23 @@ func parseRailsFile(src string, models map[string]*railsModel) {
 				optStack = optStack[:len(optStack)-1]
 			}
 		}
-		if m := reTableName.FindStringSubmatch(line); m != nil {
-			cur.tableName = m[1]
-		}
-		if reAbstract.MatchString(line) {
-			cur.abstract = true
+		if cur != nil {
+			if m := reTableName.FindStringSubmatch(line); m != nil {
+				cur.tableName = m[1]
+			}
+			if reAbstract.MatchString(line) {
+				cur.abstract = true
+			}
+			if m := reInclude.FindStringSubmatch(line); m != nil {
+				cur.includes = append(cur.includes, strings.TrimPrefix(m[1], "::"))
+			}
 		}
 		if reCallback.MatchString(line) {
-			cur.hasCallback = true
+			if cur != nil {
+				cur.hasCallback = true
+			} else {
+				curConcern.hasCallback = true
+			}
 		}
 		m := reAssoc.FindStringSubmatch(line)
 		if m == nil {
@@ -203,7 +254,11 @@ func parseRailsFile(src string, models map[string]*railsModel) {
 		if c := reAs.FindStringSubmatch(rest); c != nil {
 			a.as = c[1]
 		}
-		cur.assocs = append(cur.assocs, a)
+		if cur != nil {
+			cur.assocs = append(cur.assocs, a)
+		} else {
+			curConcern.assocs = append(curConcern.assocs, a)
+		}
 	}
 }
 
@@ -337,13 +392,13 @@ func railsToScan(dir string, models map[string]*railsModel) *ScanResult {
 		}
 	}
 
-	// callback を持つモデルの他モデル言及は、宣言外の結合の疑いとして注記だけする。
+	// 宣言外の他モデル言及は、結合の疑いとして注記だけする(全モデル対象)。
 	// エッジにはしない — ファイル粒度のヒューリスティックで、偽エッジは信頼を壊すため。
+	// 確度は 2 段階: callback(concern 経由含む)持ち = 強(ライフサイクルに乗った
+	// 書き込みの可能性大)、無し = 弱(メソッド・スコープからの参照)。強を先に出す。
+	var strongNotes, weakNotes []string
 	for _, cc := range classes {
 		m := models[cc]
-		if !m.hasCallback {
-			continue
-		}
 		declared := map[string]bool{cc: true}
 		for _, a := range m.assocs {
 			t := a.className
@@ -363,13 +418,22 @@ func railsToScan(dir string, models map[string]*railsModel) *ScanResult {
 				seen[c] = true
 			}
 		}
-		if len(mentions) > 0 {
-			sort.Strings(mentions)
-			res.Notes = append(res.Notes,
-				fmt.Sprintf("%s は callback を持ち、宣言外の %s への言及がある(結合の疑い — ファイル粒度のヒント)",
+		if len(mentions) == 0 {
+			continue
+		}
+		sort.Strings(mentions)
+		if m.hasCallback {
+			strongNotes = append(strongNotes,
+				fmt.Sprintf("[強] %s: callback(concern 含む)+ 宣言外の %s への言及 — 書き込み結合の疑い",
+					cc, strings.Join(mentions, ", ")))
+		} else {
+			weakNotes = append(weakNotes,
+				fmt.Sprintf("[弱] %s: メソッド/スコープから宣言外の %s への言及",
 					cc, strings.Join(mentions, ", ")))
 		}
 	}
+	res.Notes = append(res.Notes, strongNotes...)
+	res.Notes = append(res.Notes, weakNotes...)
 
 	for t := range tables {
 		res.Tables = append(res.Tables, t)
