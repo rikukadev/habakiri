@@ -41,6 +41,7 @@ type Analysis struct {
 	ThinSeams     []SeamReport        `json:"thinnest_seams"`   // 橋が無いときの候補
 	CrossFKs      []FK                `json:"cross_schema_fks"` // スキーマ跨ぎ(最優先で殲滅)
 	Suspects      []Suspect           `json:"suspects,omitempty"` // FK ではない結合の疑い(静的ソース由来)
+	coocNoWeight  bool                // 共起を分割グラフに算入しない(--cooc-weight=false)
 	Notes         []string            `json:"notes"`
 }
 
@@ -93,12 +94,16 @@ type HubContract struct {
 }
 
 // CoocReport は縮約ノード対の書き込み共起。
+// NPMI は正規化相互情報量(元テーブル対の最大値 = 最強の証拠を採用)。
+// Suppressed = 共起 hub(動的次数が閾値以上)に接続する対で、分割・図には不参加。
 type CoocReport struct {
-	A      string `json:"a"`
-	B      string `json:"b"`
-	Count  int    `json:"count"`
-	HasFK  bool   `json:"has_fk"`
-	Bridge bool   `json:"bridge"`
+	A          string  `json:"a"`
+	B          string  `json:"b"`
+	Count      int     `json:"count"`
+	NPMI       float64 `json:"npmi"`
+	HasFK      bool    `json:"has_fk"`
+	Bridge     bool    `json:"bridge"`
+	Suppressed bool    `json:"suppressed,omitempty"`
 }
 
 // SeamReport は橋ではないが最も細い継ぎ目。
@@ -117,6 +122,7 @@ func Analyze(sc *ScanResult, hubThreshold int) *Analysis {
 		FKCount:    len(sc.FKs) + len(sc.CrossFKs),
 		CrossFKs:   sc.CrossFKs,
 		Suspects:   sc.Suspects,
+		coocNoWeight: sc.CoocNoWeight,
 		Notes:      append([]string(nil), sc.Notes...), // ソース固有の注意を合流
 	}
 
@@ -211,17 +217,24 @@ func Analyze(sc *ScanResult, hubThreshold int) *Analysis {
 		}
 		strongSuspect[Pair{A: x, B: y}] = true
 	}
-	// 書き込み共起を縮約ノード対に写す(hub・孤立に落ちた対は除く)
+	// 書き込み共起を縮約ノード対に写す。NPMI はテーブル対の最大値(最強の証拠)。
 	coocNode := map[Pair]int{}
-	for _, c := range sc.Cooc {
-		x, y := nodeRep(c.A), nodeRep(c.B)
-		if x == y {
-			continue
+	coocNPMI := map[Pair]float64{}
+	if sc.Cooc != nil {
+		for _, c := range sc.Cooc.Pairs {
+			x, y := nodeRep(c.A), nodeRep(c.B)
+			if x == y {
+				continue
+			}
+			if x > y {
+				x, y = y, x
+			}
+			p := Pair{A: x, B: y}
+			coocNode[p] += c.Count
+			if v := sc.Cooc.NPMI(c.A, c.B, c.Count); v > coocNPMI[p] {
+				coocNPMI[p] = v
+			}
 		}
-		if x > y {
-			x, y = y, x
-		}
-		coocNode[Pair{A: x, B: y}] += c.Count
 	}
 	cutLevel := func(p Pair, e *Edge) int {
 		lv := 1
@@ -427,7 +440,10 @@ func Analyze(sc *ScanResult, hubThreshold int) *Analysis {
 		return x.Hub < y.Hub
 	})
 
-	// 共起レポート(FK の有無・橋かどうかの印付き)
+	// 共起レポート(FK の有無・橋・NPMI・共起 hub 抑制)。
+	// 共起 hub: FK なし共起の相手数が hub 閾値以上のノード。settings のような
+	// 全リクエスト共起テーブルが最強の糊になるのを防ぐ — FK グラフで hub を
+	// 先に外すのと同じ規律を動的エッジにも適用する。
 	if len(coocNode) > 0 {
 		edgePair := map[Pair]bool{}
 		for p := range edges {
@@ -443,10 +459,32 @@ func Analyze(sc *ScanResult, hubThreshold int) *Analysis {
 			}
 			return coocKeys[i].B < coocKeys[j].B
 		})
+		coocDeg := map[string]int{}
+		for _, p := range coocKeys {
+			if !edgePair[p] {
+				coocDeg[p.A]++
+				coocDeg[p.B]++
+			}
+		}
+		coocHub := map[string]bool{}
+		var coocHubs []string
+		for n, d := range coocDeg {
+			if d >= hubThreshold {
+				coocHub[n] = true
+				coocHubs = append(coocHubs, fmt.Sprintf("%s(次数 %d)", n, d))
+			}
+		}
+		sort.Strings(coocHubs)
+		if len(coocHubs) > 0 {
+			a.Notes = append(a.Notes, fmt.Sprintf(
+				"共起 hub(動的次数 ≥ %d): %s — この対の共起は分割・図に算入しない(全リクエスト共起の糊化を防ぐ)",
+				hubThreshold, strings.Join(coocHubs, ", ")))
+		}
 		for _, p := range coocKeys {
 			a.Cooc = append(a.Cooc, CoocReport{
-				A: p.A, B: p.B, Count: coocNode[p],
-				HasFK: edgePair[p], Bridge: bridgeSet[p]})
+				A: p.A, B: p.B, Count: coocNode[p], NPMI: coocNPMI[p],
+				HasFK: edgePair[p], Bridge: bridgeSet[p],
+				Suppressed: coocHub[p.A] || coocHub[p.B]})
 		}
 		var quiet []string
 		for _, bp := range bridges {
@@ -468,7 +506,7 @@ func Analyze(sc *ScanResult, hubThreshold int) *Analysis {
 
 	a.Partition = BuildPartition(a)
 
-	if len(sc.Cooc) == 0 {
+	if sc.Cooc == nil {
 		a.Notes = append(a.Notes,
 			"FK が無いことは無関係の証明ではない — アプリ層 JOIN・ポリモーフィック関連は静的スキャンでは見えない。--cooc でクエリログの書き込み共起を持ち込める。")
 	}
@@ -486,8 +524,12 @@ func WriteText(w io.Writer, a *Analysis) {
 	p("")
 
 	if a.Partition != nil && len(a.Partition.Groups) > 1 {
-		p("■ 分割案(Girvan–Newman + モジュラリティ Q=%.2f)— 大物 %d 個への分割", 
+		p("■ 分割案(Girvan–Newman + モジュラリティ Q=%.2f)— 大物 %d 個への分割",
 			a.Partition.Modularity, len(a.Partition.Groups))
+		if a.Partition.MaxModularity > a.Partition.Modularity+1e-9 {
+			p("  (Q 最大 %.2f との差 %.2f = 選んだ粒度の制約コスト — 組織境界とデータの自然な切れ目のずれ)",
+				a.Partition.MaxModularity, a.Partition.MaxModularity-a.Partition.Modularity)
+		}
 		if len(a.Partition.Levels) > 1 {
 			var ladder []string
 			for _, lv := range a.Partition.Levels {
@@ -513,7 +555,20 @@ func WriteText(w io.Writer, a *Analysis) {
 				more = fmt.Sprintf(" … 他 %d ユニット", len(units)-8)
 				units = units[:8]
 			}
-			p("  S%d(%d テーブル)%s", i+1, gr.Tables, hubs)
+			glue := ""
+			if len(gr.Glue) > 0 {
+				var kinds []string
+				for _, k := range []string{"FK", "疑い", "共起", "hub契約"} {
+					if n := gr.Glue[k]; n > 0 {
+						kinds = append(kinds, fmt.Sprintf("%s %d", k, n))
+					}
+				}
+				glue = " / 結束: " + strings.Join(kinds, "・")
+				if gr.CoocOnly {
+					glue += " ⚠共起のみ — 要レビュー"
+				}
+			}
+			p("  S%d(%d テーブル)%s%s", i+1, gr.Tables, hubs, glue)
 			p("      %s%s", strings.Join(units, ", "), more)
 		}
 		p("")
@@ -575,7 +630,10 @@ func WriteText(w io.Writer, a *Analysis) {
 			} else if c.HasFK {
 				mark = "FKあり"
 			}
-			p("  %s × %s ×%d  %s", c.A, c.B, c.Count, mark)
+			if c.Suppressed {
+				mark += "(共起 hub 接続 — 算入しない)"
+			}
+			p("  %s × %s ×%d npmi=%.2f  %s", c.A, c.B, c.Count, c.NPMI, mark)
 		}
 		p("")
 	}

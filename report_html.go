@@ -88,11 +88,24 @@ code { font-family:ui-monospace,Menlo,monospace; font-size:.85em; }
 		p(`<h2>分割案 — 大物 %d 個(Girvan–Newman、モジュラリティ Q=%.2f)</h2>
 <p class="sub">橋・宣言外の疑い[強]・hub 契約(FK 本数 / hub 次数で正規化)を重み付きグラフにし、
 辺媒介中心性の高い辺から外してモジュラリティ最大の分割を採用。小コミュニティは最強結合先へ編入。</p>
-<div class="tw"><table><tr><th>#</th><th>テーブル</th><th>所有 hub</th><th>ユニット</th></tr>`,
+<div class="tw"><table><tr><th>#</th><th>テーブル</th><th>所有 hub</th><th>結束</th><th>ユニット</th></tr>`,
 			len(a.Partition.Groups), a.Partition.Modularity)
 		for i, gr := range a.Partition.Groups {
-			p(`<tr><td>S%d</td><td>%d</td><td><code>%s</code></td><td><code>%s</code></td></tr>`,
-				i+1, gr.Tables, esc(strings.Join(gr.Hubs, ", ")), esc(strings.Join(gr.Units, ", ")))
+			glue := ""
+			if len(gr.Glue) > 0 {
+				var kinds []string
+				for _, k := range []string{"FK", "疑い", "共起", "hub契約"} {
+					if n := gr.Glue[k]; n > 0 {
+						kinds = append(kinds, fmt.Sprintf("%s %d", k, n))
+					}
+				}
+				glue = strings.Join(kinds, "・")
+				if gr.CoocOnly {
+					glue += " ⚠共起のみ"
+				}
+			}
+			p(`<tr><td>S%d</td><td>%d</td><td><code>%s</code></td><td>%s</td><td><code>%s</code></td></tr>`,
+				i+1, gr.Tables, esc(strings.Join(gr.Hubs, ", ")), esc(glue), esc(strings.Join(gr.Units, ", ")))
 		}
 		p(`</table></div>`)
 	}
@@ -123,7 +136,7 @@ code { font-family:ui-monospace,Menlo,monospace; font-size:.85em; }
 	if len(a.Cooc) > 0 {
 		p(`<h2>実測共起(--cooc)</h2>
 <p class="sub">同一トランザクションで一緒に書かれたテーブル対。FK なしの対は宣言に現れない結合の実測。</p>
-<div class="tw"><table><tr><th>対</th><th>回数</th><th>状態</th></tr>`)
+<div class="tw"><table><tr><th>対</th><th>回数</th><th>NPMI</th><th>状態</th></tr>`)
 		for _, c := range a.Cooc {
 			mark := "FKなし — 宣言に現れない結合"
 			if c.Bridge {
@@ -131,7 +144,10 @@ code { font-family:ui-monospace,Menlo,monospace; font-size:.85em; }
 			} else if c.HasFK {
 				mark = "FKあり"
 			}
-			p(`<tr><td><code>%s × %s</code></td><td>%d</td><td>%s</td></tr>`, esc(c.A), esc(c.B), c.Count, esc(mark))
+			if c.Suppressed {
+				mark += "(共起 hub — 算入しない)"
+			}
+			p(`<tr><td><code>%s × %s</code></td><td>%d</td><td>%.2f</td><td>%s</td></tr>`, esc(c.A), esc(c.B), c.Count, c.NPMI, esc(mark))
 		}
 		p(`</table></div>`)
 	}

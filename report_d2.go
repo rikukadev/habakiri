@@ -158,14 +158,14 @@ func writeD2(w io.Writer, a *Analysis, cutLevel int) {
 
 	// 実測共起(橙)。FK なしの対のみ = 宣言に現れない不変条件の候補。
 	for _, c := range a.Cooc {
-		if c.HasFK {
+		if c.HasFK || c.Suppressed {
 			continue
 		}
 		pa, pb := path[c.A], path[c.B]
 		if pa == "" || pb == "" {
 			continue
 		}
-		p(`%s -- %s: "共起 %d" {class: [cooc]}`, pa, pb, c.Count)
+		p(`%s -- %s: "共起 %d(npmi %.2f)" {class: [cooc]}`, pa, pb, c.Count, c.NPMI)
 	}
 
 	// 宣言外の疑い(破線紫)。FK が既にある対・同一ノードは省く。
