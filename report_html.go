@@ -81,6 +81,22 @@ code { font-family:ui-monospace,Menlo,monospace; font-size:.85em; }
 		esc(a.Schema), a.TableCount, a.FKCount, len(a.Hubs), a.HubThreshold,
 		len(a.CascadeGroups), len(a.Bridges), len(a.Isolated))
 
+	if a.Partition != nil && len(a.Partition.Groups) > 1 {
+		partSVG := render(WriteSVGPartition)
+		p(`<h2>分割案の図 — グループ = コンテナ、跨ぐ ✂ = サービス間 API 面</h2>
+<figure>%s</figure>`, partSVG)
+		p(`<h2>分割案 — 大物 %d 個(Girvan–Newman、モジュラリティ Q=%.2f)</h2>
+<p class="sub">橋・宣言外の疑い[強]・hub 契約(FK 本数 / hub 次数で正規化)を重み付きグラフにし、
+辺媒介中心性の高い辺から外してモジュラリティ最大の分割を採用。小コミュニティは最強結合先へ編入。</p>
+<div class="tw"><table><tr><th>#</th><th>テーブル</th><th>所有 hub</th><th>ユニット</th></tr>`,
+			len(a.Partition.Groups), a.Partition.Modularity)
+		for i, gr := range a.Partition.Groups {
+			p(`<tr><td>S%d</td><td>%d</td><td><code>%s</code></td><td><code>%s</code></td></tr>`,
+				i+1, gr.Tables, esc(strings.Join(gr.Hubs, ", ")), esc(strings.Join(gr.Units, ", ")))
+		}
+		p(`</table></div>`)
+	}
+
 	p(`<h2>切る前</h2>
 <figure>%s<figcaption class="sub">現状の E-R 図(D2/dagre で機械生成)。箱 = テーブル(CASCADE 集約はメンバーを行で列挙、
 単独テーブルは FK 列を行で列挙)。実線矢印 = FK(子 → 親、ラベルは FK 列名)、<b>太線 ✂Ln = 橋(n = 切断レベル)</b>、
@@ -102,22 +118,6 @@ code { font-family:ui-monospace,Menlo,monospace; font-size:.85em; }
 		} else {
 			p(`<details><summary>切った後 — レベル %d を開く</summary>%s</details>`, lv, fig)
 		}
-	}
-
-	if a.Partition != nil && len(a.Partition.Groups) > 1 {
-		partSVG := render(WriteSVGPartition)
-		p(`<h2>分割案の図 — グループ = コンテナ、跨ぐ ✂ = サービス間 API 面</h2>
-<figure>%s</figure>`, partSVG)
-		p(`<h2>分割案 — 大物 %d 個(Girvan–Newman、モジュラリティ Q=%.2f)</h2>
-<p class="sub">橋・宣言外の疑い[強]・hub 契約(FK 本数 / hub 次数で正規化)を重み付きグラフにし、
-辺媒介中心性の高い辺から外してモジュラリティ最大の分割を採用。小コミュニティは最強結合先へ編入。</p>
-<div class="tw"><table><tr><th>#</th><th>テーブル</th><th>所有 hub</th><th>ユニット</th></tr>`,
-			len(a.Partition.Groups), a.Partition.Modularity)
-		for i, gr := range a.Partition.Groups {
-			p(`<tr><td>S%d</td><td>%d</td><td><code>%s</code></td><td><code>%s</code></td></tr>`,
-				i+1, gr.Tables, esc(strings.Join(gr.Hubs, ", ")), esc(strings.Join(gr.Units, ", ")))
-		}
-		p(`</table></div>`)
 	}
 
 	if len(a.HubContracts) > 0 {

@@ -422,6 +422,40 @@ func WriteText(w io.Writer, a *Analysis) {
 	p("スキーマ %s: %d テーブル / %d FK", a.Schema, a.TableCount, a.FKCount)
 	p("")
 
+	if a.Partition != nil && len(a.Partition.Groups) > 1 {
+		p("■ 分割案(Girvan–Newman + モジュラリティ Q=%.2f)— 大物 %d 個への分割", 
+			a.Partition.Modularity, len(a.Partition.Groups))
+		if len(a.Partition.Levels) > 1 {
+			var ladder []string
+			for _, lv := range a.Partition.Levels {
+				var names []string
+				for _, gr := range lv.Groups {
+					names = append(names, fmt.Sprintf("%s(%d)", gr.Name, gr.Tables))
+				}
+				ladder = append(ladder, fmt.Sprintf("    %d 分割 Q=%.2f: %s", lv.K, lv.Modularity, strings.Join(names, " | ")))
+			}
+			p("  粒度の階段(--services N で選択。ちいさく割らない選択肢も見える):")
+			for _, l := range ladder {
+				p("%s", l)
+			}
+		}
+		for i, gr := range a.Partition.Groups {
+			hubs := ""
+			if len(gr.Hubs) > 0 {
+				hubs = " / 所有 hub: " + strings.Join(gr.Hubs, ", ")
+			}
+			units := gr.Units
+			more := ""
+			if len(units) > 8 {
+				more = fmt.Sprintf(" … 他 %d ユニット", len(units)-8)
+				units = units[:8]
+			}
+			p("  S%d(%d テーブル)%s", i+1, gr.Tables, hubs)
+			p("      %s%s", strings.Join(units, ", "), more)
+		}
+		p("")
+	}
+
 	if len(a.CrossFKs) > 0 {
 		p("■ スキーマ跨ぎ FK(%d 本)— DDL ロックが他スキーマに波及する。最優先で切る", len(a.CrossFKs))
 		for _, fk := range a.CrossFKs {
@@ -482,42 +516,8 @@ func WriteText(w io.Writer, a *Analysis) {
 		p("")
 	}
 
-	if a.Partition != nil && len(a.Partition.Groups) > 1 {
-		p("■ 分割案(Girvan–Newman + モジュラリティ Q=%.2f)— 大物 %d 個への分割", 
-			a.Partition.Modularity, len(a.Partition.Groups))
-		if len(a.Partition.Levels) > 1 {
-			var ladder []string
-			for _, lv := range a.Partition.Levels {
-				var names []string
-				for _, gr := range lv.Groups {
-					names = append(names, fmt.Sprintf("%s(%d)", gr.Name, gr.Tables))
-				}
-				ladder = append(ladder, fmt.Sprintf("    %d 分割 Q=%.2f: %s", lv.K, lv.Modularity, strings.Join(names, " | ")))
-			}
-			p("  粒度の階段(--services N で選択。ちいさく割らない選択肢も見える):")
-			for _, l := range ladder {
-				p("%s", l)
-			}
-		}
-		for i, gr := range a.Partition.Groups {
-			hubs := ""
-			if len(gr.Hubs) > 0 {
-				hubs = " / 所有 hub: " + strings.Join(gr.Hubs, ", ")
-			}
-			units := gr.Units
-			more := ""
-			if len(units) > 8 {
-				more = fmt.Sprintf(" … 他 %d ユニット", len(units)-8)
-				units = units[:8]
-			}
-			p("  S%d(%d テーブル)%s", i+1, gr.Tables, hubs)
-			p("      %s%s", strings.Join(units, ", "), more)
-		}
-		p("")
-	}
-
 	if len(a.Bridges) > 0 {
-		p("■ 橋 = 切断点(%d 本)— 1 本切るだけで塊が分離する", len(a.Bridges))
+		p("■ 橋 = 切断点(%d 本)— 分割案の境界を実行するときの FK 作業リスト", len(a.Bridges))
 		for _, b := range a.Bridges {
 			p("  %s ×— %s   レベル %d   重み %.0f   分離後 %d ↔ %d テーブル", b.A, b.B, b.CutLevel, b.Weight, b.SideASize, b.SideBSize)
 			for _, fk := range b.FKs {
