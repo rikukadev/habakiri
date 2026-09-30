@@ -1,0 +1,37 @@
+スキーマ blog+yii1:yii1app [logical]: 7 テーブル / 4 FK
+
+■ 孤立テーブル(2)— FK が無く、今日でも動かせる
+  attachment, audit_log
+
+■ 橋 = 切断点(4 本)— 分割案の境界を実行するときの FK 作業リスト
+  category ×— post_category   レベル 1   重み 1   分離後 1 ↔ 1 テーブル
+      post_category.category_id(NULL不明) → category  [NO ACTION / yii1:post_category(mm)]
+      難易度: 未確定(NULL 許容を判定できない FK を含む — 列定義を確認してから見積もる)
+      切断後に書くもの: 結果整合(outbox→イベント購読)or 読みレプリカ
+  comment ×— post   レベル 2   重み 1   分離後 1 ↔ 1 テーブル
+      comment.post_id(NULL不明) → post  [NO ACTION / yii1:Comment→Post]
+      難易度: 未確定(NULL 許容を判定できない FK を含む — 列定義を確認してから見積もる)
+      切断後に書くもの: 同期コマンド + pending + 冪等キー / 存在保証 API
+  post ×— post_category   レベル 1   重み 1   分離後 1 ↔ 1 テーブル
+      post_category.post_id(NULL不明) → post  [NO ACTION / yii1:post_category(mm)]
+      難易度: 未確定(NULL 許容を判定できない FK を含む — 列定義を確認してから見積もる)
+      切断後に書くもの: 結果整合(outbox→イベント購読)or 読みレプリカ
+  post ×— tbl_user   レベル 2   重み 1   分離後 1 ↔ 1 テーブル
+      post.author_id(NULL不明) → tbl_user  [NO ACTION / yii1:Post→User]
+      難易度: 未確定(NULL 許容を判定できない FK を含む — 列定義を確認してから見積もる)
+      切断後に書くもの: 同期コマンド + pending + 冪等キー / 存在保証 API
+
+■ ブロック(2-辺連結成分)— 内部は密。これ以上の分割は段階 2 の設計判断
+  B0  (1 tables) category
+  B1  (1 tables) comment
+  B2  (1 tables) post
+  B3  (1 tables) post_category
+  B4  (1 tables) tbl_user
+
+注: [強] Post: beforeDelete/afterDelete 内で Comment を削除 — 手書きカスケード(実質ライフサイクル共有。切らない候補)
+注: [弱] Post: with で Comment を読む(read 側の暗黙結合)
+注: [強] Post: beforeDelete/afterSave/behaviors 等 + 宣言外の Attachment への言及 — Yii1 はカスケードが callback に書かれがち
+注: [強] Post: 生SQL/コマンドビルダで attachment, tbl_user へ書き込み — 宣言に現れない実結合
+注: DB に FK が無く宣言だけの関係のうち、NULL 許容が判定不能なものは重み 1 を暫定で置いている — 「弱いと判明した」ではなく情報不足時の値(--show-evidence で unknown_provisional として見える)
+注: FK が無いことは無関係の証明ではない — アプリ層 JOIN・ポリモーフィック関連は静的スキャンでは見えない。--cooc でクエリログの書き込み共起を持ち込める。
+注: CASCADE 集約は「切らない」判断を機械化したもの。切りたくなったらまず CASCADE を外す設計判断が先。

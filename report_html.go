@@ -173,16 +173,34 @@ code { font-family:ui-monospace,Menlo,monospace; font-size:.85em; }
 		for _, b := range a.Bridges {
 			var fks []string
 			for _, fk := range b.FKs {
-				nn := "NULL可"
-				if fk.AllNotNull {
-					nn = "NOT NULL"
-				}
+				nn := nullLabel(fk, a.unknownAware)
 				fks = append(fks, esc(fmt.Sprintf("%s.%s(%s) → %s [%s]",
 					fk.ChildTable, strings.Join(fk.ChildCols, ","), nn, fk.ParentTable, fk.DeleteRule)))
 			}
 			p(`<tr><td><code>%s × %s</code></td><td class="w3">%.0f</td><td>%d ↔ %d</td><td><code>%s</code></td><td>%s</td></tr>`,
 				esc(b.A), esc(b.B), b.Weight, b.SideASize, b.SideBSize,
 				strings.Join(fks, "<br>"), esc(b.Difficulty))
+		}
+		p(`</table></div>`)
+	}
+
+	if a.showEvidence && len(a.FKs) > 0 {
+		p(`<h2>FK の出自(%d 本)</h2>
+<p class="sub">強制 = DB が制約を張っている。重みの理由が <code>logical_*</code> / <code>unknown_provisional</code> のものは DB で確認した値ではない。</p>
+<div class="tw"><table><tr><th>FK</th><th>強制</th><th>NULL</th><th>重み</th><th>理由</th><th>証拠</th></tr>`, len(a.FKs))
+		for _, fk := range a.FKs {
+			enforced := "—"
+			if fk.Enforced() {
+				enforced = "DB"
+			}
+			wt, reason := weightOf(fk)
+			var evs []string
+			for _, ev := range fk.Evidences {
+				evs = append(evs, esc(ev.Source+": "+ev.Origin))
+			}
+			p(`<tr><td><code>%s</code></td><td>%s</td><td>%s</td><td>%.0f</td><td><code>%s</code></td><td><code>%s</code></td></tr>`,
+				esc(fmt.Sprintf("%s.%s → %s", fk.ChildTable, strings.Join(fk.ChildCols, ","), fk.ParentTable)),
+				enforced, nullLabel(fk, true), wt, esc(reason), strings.Join(evs, "<br>"))
 		}
 		p(`</table></div>`)
 	}

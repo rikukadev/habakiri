@@ -120,6 +120,7 @@ func relationKey(fk FK) string {
 func MergeScans(phys, logic *ScanResult) *ScanResult {
 	res := &ScanResult{
 		Schema:         phys.Schema + "+" + logic.Schema,
+		Merged:         true,
 		Dialect:        phys.Dialect,
 		CrossFKs:       phys.CrossFKs,
 		PhysicalTables: append([]string(nil), phys.Tables...),

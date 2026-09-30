@@ -40,6 +40,8 @@ func run(prog string, args []string, stdout, stderr io.Writer) int {
 	railsDir := fs.String("rails", "", "Rails アプリのルート(または app/models)を静的に読む。DB 接続不要")
 	yii1Dir := fs.String("yii1", "", "Yii 1.x アプリのルート(または protected/models)を静的に読む。DB 接続不要")
 	schemaJSON := fs.String("schema-json", "", "--dump-schema で書き出したスキャン結果を DSN の代わりに読む(DB に繋げない環境へスキーマだけ持ち出して解析する)")
+	graph := fs.String("graph", "", "グラフの見方: physical(DB が強制する FK のみ)/ logical(ORM の宣言のみ)/ combined(統合)。既定は入力に応じる(DB だけ → physical、静的ソースだけ → logical、併用 → combined)")
+	showEvidence := fs.Bool("show-evidence", false, "各 FK の出自(証拠の位置・DB が強制しているか・NULL 許容・重みの理由)を text / JSON / HTML に出す")
 	dumpSchema := fs.String("dump-schema", "", "スキャン結果(テーブルと FK)を JSON でこのファイルへ書き出す")
 	jsonOut := fs.Bool("json", false, "JSON で出力")
 	mermaid := fs.String("mermaid", "", "Mermaid 図をこのファイルへ書き出す")
@@ -151,6 +153,17 @@ func run(prog string, args []string, stdout, stderr io.Writer) int {
 	default:
 		sc = logic
 	}
+	// --graph を明示したときだけ射影する。既定は入力に応じた見方で、
+	// それは射影なしの sc そのもの(単独ソースの出力を 1 バイトも変えない)。
+	if *graph != "" {
+		kind, err := ParseGraphKind(*graph)
+		if err != nil {
+			errln(prog+":", err)
+			return 2
+		}
+		sc = Project(sc, kind, *coocWeight)
+	}
+	sc.ShowEvidence = *showEvidence
 	if *coocFile != "" {
 		cooc, err := LoadCooc(*coocFile)
 		if err != nil {

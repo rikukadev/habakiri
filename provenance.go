@@ -13,6 +13,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 )
@@ -172,4 +173,48 @@ func sourceOrigin(root, path string, line int) string {
 		return fmt.Sprintf("%s:%d", rel, line)
 	}
 	return rel
+}
+
+// MarshalJSON: 既定では Evidence 導入前と同じ形。--show-evidence のときだけ
+// 出自のフィールドを足す(フィールド追加のみ。既存の形は変えない)。
+func (fk FK) MarshalJSON() ([]byte, error) {
+	type plain FK // メソッドを持たない別名 — 再帰を避ける
+	if !fk.showEvidence {
+		return json.Marshal(plain(fk))
+	}
+	w, reason := weightOf(fk)
+	evs := fk.Evidences
+	if evs == nil {
+		evs = []Evidence{}
+	}
+	return json.Marshal(struct {
+		plain
+		Evidences       []Evidence  `json:"evidences"`
+		Enforced        bool        `json:"enforced"`
+		Nullable        Nullability `json:"nullable"`
+		EffectiveWeight float64     `json:"effective_weight"`
+		WeightReason    string      `json:"weight_reason"`
+	}{plain(fk), evs, fk.Enforced(), fk.Nullability(), w, reason})
+}
+
+// withEvidence は出自つきで JSON に出す写しを返す。
+func withEvidence(fks []FK) []FK {
+	out := make([]FK, len(fks))
+	for i, fk := range fks {
+		fk.showEvidence = true
+		out[i] = fk
+	}
+	return out
+}
+
+// nullLabel は人間向けの NULL 許容表記。Unknown を「NULL可」と書き分けるのは
+// 出自を意識する文脈(併用・--show-evidence)だけ — 単独解析の既存出力は変えない。
+func nullLabel(fk FK, aware bool) string {
+	switch {
+	case fk.AllNotNull:
+		return "NOT NULL"
+	case aware && fk.Nullability() == NullableUnknown:
+		return "NULL不明"
+	}
+	return "NULL可"
 }

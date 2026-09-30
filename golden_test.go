@@ -28,6 +28,12 @@ var goldenCases = []struct {
 	{"rails-cooc", []string{"--rails", "testdata/railsapp", "--cooc", "testdata/cooc-rails.txt"}},
 	{"yii1-cooc", []string{"--yii1", "testdata/yii1app", "--cooc", "testdata/cooc-yii1.txt"}},
 	{"postgres", []string{"--schema-json", "testdata/postgres-fixture.scan.json"}},
+	// ここから下は v0.6.0 で増えた入力(併用・--graph・--show-evidence)。
+	// v0.5.0 には無い経路なので、現行の出力を固定している。
+	{"merged", []string{"--schema-json", "testdata/yii1app.scan.json", "--yii1", "testdata/yii1app"}},
+	{"merged-evidence", []string{"--schema-json", "testdata/yii1app.scan.json", "--yii1", "testdata/yii1app", "--show-evidence"}},
+	{"merged-physical", []string{"--schema-json", "testdata/yii1app.scan.json", "--yii1", "testdata/yii1app", "--graph", "physical"}},
+	{"merged-logical", []string{"--schema-json", "testdata/yii1app.scan.json", "--yii1", "testdata/yii1app", "--graph", "logical"}},
 }
 
 func runCLI(t *testing.T, args ...string) []byte {
