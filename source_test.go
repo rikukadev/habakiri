@@ -466,3 +466,73 @@ func TestScanYii1Resolution(t *testing.T) {
 		}
 	})
 }
+
+// Yii1 のモデル判定(#46 / #47): 継承を辿り、基底クラスと動的なテーブル名を
+// テーブルにしない。
+func TestScanYii1Inheritance(t *testing.T) {
+	sc, err := ScanYii1("testdata/yii1inherit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx := fkIndex(sc.FKs)
+	notes := strings.Join(sc.Notes, "\n")
+
+	t.Run("テーブルは具体的なモデルだけ(基底クラス・動的な名前を数えない)", func(t *testing.T) {
+		want := "answers,settings,x2_accounts,x2_contacts"
+		if got := strings.Join(sc.Tables, ","); got != want {
+			t.Errorf("tables = %s, want %s", got, want)
+		}
+		if !strings.Contains(notes, "基底クラス 4 個はテーブルにしていない") ||
+			!strings.Contains(notes, "AppActiveRecord, AppModel, Dynamic, Response") {
+			t.Errorf("基底クラスの注: %v", sc.Notes)
+		}
+	})
+
+	t.Run("間接継承のモデルを読む(#47-1)", func(t *testing.T) {
+		// Contact → AppModel → AppActiveRecord → CActiveRecord
+		if _, ok := idx["x2_contacts(account_id)→x2_accounts"]; !ok {
+			t.Errorf("2 段継承のモデルの関連が無い: %v", idx)
+		}
+	})
+
+	t.Run("短い配列構文の relations も読む", func(t *testing.T) {
+		if _, ok := idx["answers(contact_id)→x2_contacts"]; !ok {
+			t.Errorf("[self::BELONGS_TO, ...] が読めていない: %v", idx)
+		}
+	})
+
+	t.Run("動的なテーブル名は判定不能(#46-2)", func(t *testing.T) {
+		for key := range idx {
+			if strings.Contains(key, "responses") || strings.Contains(key, "Response") {
+				t.Errorf("動的なテーブル名への FK を作った: %s", key)
+			}
+		}
+		for _, want := range []string{"Response(テーブル族 responses_*)", "Timing(名前を静的に読めない)",
+			"Answer.response → Response(テーブル族 responses_*)"} {
+			if !strings.Contains(notes, want) {
+				t.Errorf("注に %q が無い: %v", want, sc.Notes)
+			}
+		}
+	})
+
+	t.Run("実行時に組み立てる relations は黙って 0 本にしない(#47-2)", func(t *testing.T) {
+		if !strings.Contains(notes, "relations() を静的に読めない") || !strings.Contains(notes, "AppModel(使うモデル 1)") {
+			t.Errorf("静的に読めない relations の注: %v", sc.Notes)
+		}
+		// コメント付きの空の relations()(Setting)は読めている
+		if strings.Contains(notes, "Setting(") {
+			t.Errorf("空の relations() を読めない扱いにした: %v", sc.Notes)
+		}
+	})
+
+	t.Run("継承を辿れないクラスは注記", func(t *testing.T) {
+		if !strings.Contains(notes, "Orphan(ExtensionBaseRecord で切れる)") {
+			t.Errorf("継承を辿れないクラスの注: %v", sc.Notes)
+		}
+		for _, tbl := range sc.Tables {
+			if tbl == "orphans" {
+				t.Error("継承を辿れないクラスをテーブルにした")
+			}
+		}
+	})
+}
