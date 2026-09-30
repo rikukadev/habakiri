@@ -118,12 +118,21 @@ func ScanRails(dir string) (*ScanResult, error) {
 
 	models := map[string]*railsModel{}
 	concerns := map[string]*railsConcern{}
+	fileOf := map[string]string{} // class → file
 	for _, f := range files {
 		raw, err := os.ReadFile(f)
 		if err != nil {
 			return nil, err
 		}
+		before := len(models)
 		parseRailsFile(string(raw), models, concerns)
+		if len(models) > before {
+			for c, m := range models {
+				if m.fileSrc == string(raw) && fileOf[c] == "" {
+					fileOf[c] = f
+				}
+			}
+		}
 	}
 
 	// concern の中身(関連宣言・callback・言及)を include 先のモデルへ伝播する。
@@ -143,7 +152,14 @@ func ScanRails(dir string) (*ScanResult, error) {
 		}
 	}
 
-	return railsToScan(dir, models), nil
+	res := railsToScan(dir, models)
+	res.FileTables = map[string]string{}
+	for c, f := range fileOf {
+		if isARModel(models, c) && !models[c].abstract && c != "ApplicationRecord" {
+			res.FileTables[f] = tableOf(models, c)
+		}
+	}
+	return res, nil
 }
 
 // joinContinuations: 行末カンマ(や開き括弧)で折り返された宣言を 1 行に畳む。
@@ -436,6 +452,41 @@ func railsToScan(dir string, models map[string]*railsModel) *ScanResult {
 					cc, strings.Join(mentions, ", ")))
 		}
 	}
+	// joins/includes の宣言外参照(read 側の暗黙結合、[弱])。
+	// 宣言済み関連への joins は FK 側で既に見えているので、未宣言のみ拾う。
+	reJoins := regexp.MustCompile(`(?:joins|includes|eager_load|preload)\(\s*:(\w+)`)
+	for _, cc := range classes {
+		m := models[cc]
+		declared := map[string]bool{cc: true}
+		for _, a2 := range m.assocs {
+			t := a2.className
+			if t == "" {
+				t = classify(a2.name)
+			}
+			declared[t] = true
+		}
+		var hits []string
+		seen := map[string]bool{}
+		for _, j := range reJoins.FindAllStringSubmatch(m.fileSrc, -1) {
+			target := classify(j[1])
+			if declared[target] || seen[target] {
+				continue
+			}
+			if _, ok := models[target]; !ok || !isARModel(models, target) {
+				continue
+			}
+			seen[target] = true
+			hits = append(hits, target)
+			res.Suspects = append(res.Suspects, Suspect{
+				FromTable: tableOf(models, cc), ToTable: tableOf(models, target), Strong: false})
+		}
+		if len(hits) > 0 {
+			sort.Strings(hits)
+			weakNotes = append(weakNotes,
+				fmt.Sprintf("[弱] %s: joins/includes で宣言外の %s を読む(read 側の暗黙結合)", cc, strings.Join(hits, ", ")))
+		}
+	}
+
 	// 生 SQL(execute / sanitize 済み文字列)の書き込み先([強])
 	tableSet := map[string]bool{}
 	for t := range tables {

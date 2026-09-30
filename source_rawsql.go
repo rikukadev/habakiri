@@ -50,3 +50,21 @@ func extractRawWriteTables(src string) []string {
 	sort.Strings(list)
 	return list
 }
+
+// braceBody: 開き波括弧位置から対応する閉じまでの本文(近似 — 文字列中の
+// 波括弧は数えるが、モデルコードの callback では実用上問題にならない)。
+func braceBody(src string, open int) string {
+	depth := 0
+	for i := open; i < len(src); i++ {
+		switch src[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return src[open+1 : i]
+			}
+		}
+	}
+	return src[open+1:]
+}

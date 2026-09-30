@@ -33,6 +33,9 @@ $ habakiri --yii1  /path/to/yii1app                       # Yii1 relations()(DB 
 | `--cooc FILE` | 同一 tx 書き込み共起のログ(MySQL general log / Postgres log_statement=all / 1 行 1 tx の中立形式を自動判別) |
 | `--baseline FILE` | 過去の `--json` と比較し、結合の逆行(新規 FK ペア・hub 契約増・跨ぎ FK 増)で exit 3 — CI に置く計器。**比較は静的エッジのみ**(共起はサンプリング依存で揺れるため対象外) |
 | `--cooc-weight=false` | 共起を分割グラフに算入しない(レポートのみ。CI の静的モード) |
+| `--patterns FILE` | 橋の「切断後に書くもの」語彙の差し替え(JSON) |
+| `--emit-contract FILE` | 橋から FK DROP マイグレーションのスケルトン生成(前提ゲートをコメント同梱) |
+| `--churn DIR` / `--criticality FILE` | 切り出し 1 本目候補のランキング(橋 昇順 × 変更頻度 降順 × 事故コスト 昇順。静的ソースと併用) |
 
 DSN は環境変数 `HABAKIRI_DSN` でも渡せる。
 

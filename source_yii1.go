@@ -18,6 +18,7 @@ import (
 )
 
 type yiiModel struct {
+	path      string
 	class     string
 	tableName string // tableName() の戻り(無ければクラス名)
 	fileSrc   string
@@ -25,6 +26,7 @@ type yiiModel struct {
 }
 
 type yiiRelation struct {
+	name   string // relations() の宣言名(with の解決に使う)
 	kind   string // BELONGS_TO / HAS_MANY / HAS_ONE / MANY_MANY
 	target string // 相手モデルのクラス名
 	fkSpec string // FK 列(カンマ区切り)、MANY_MANY は 'join(col1, col2)'
@@ -90,15 +92,23 @@ func ScanYii1(dir string) (*ScanResult, error) {
 			m.tableName = yiiTableName(tm[1])
 		}
 		for _, rm := range reYiiRel.FindAllStringSubmatch(src, -1) {
-			m.relations = append(m.relations, yiiRelation{kind: rm[2], target: rm[3], fkSpec: rm[4]})
+			m.relations = append(m.relations, yiiRelation{name: rm[1], kind: rm[2], target: rm[3], fkSpec: rm[4]})
 		}
 		models[m.class] = m
+		m.path = f
 	}
 	if len(models) == 0 {
 		return nil, fmt.Errorf("%s に CActiveRecord 系のモデルが見つかりません", modelsDir)
 	}
 
-	return yiiToScan(dir, models), nil
+	res := yiiToScan(dir, models)
+	res.FileTables = map[string]string{}
+	for _, m := range models {
+		if m.path != "" {
+			res.FileTables[m.path] = m.tableName
+		}
+	}
+	return res, nil
 }
 
 func yiiToScan(dir string, models map[string]*yiiModel) *ScanResult {
@@ -174,6 +184,75 @@ func yiiToScan(dir string, models map[string]*yiiModel) *ScanResult {
 	tableSet := map[string]bool{}
 	for t := range tables {
 		tableSet[t] = true
+	}
+
+	// 手書きカスケード: beforeDelete / afterDelete の本文内の削除呼び出し。
+	// Yii1 は relations にカスケードを宣言できないので、ここが唯一の証拠源。
+	reCbDelete := regexp.MustCompile(`function\s+(beforeDelete|afterDelete)\s*\([^)]*\)\s*\{`)
+	reDelModel := regexp.MustCompile(`(\w+)::model\(\)->delete(?:All|AllByAttributes|ByPk)?\(`)
+	reDelRel := regexp.MustCompile(`\$this->(\w+)->delete\(`)
+	for _, cc := range classes {
+		m := models[cc]
+		for _, loc := range reCbDelete.FindAllStringSubmatchIndex(m.fileSrc, -1) {
+			body := braceBody(m.fileSrc, loc[1]-1)
+			targets := map[string]bool{}
+			for _, d := range reDelModel.FindAllStringSubmatch(body, -1) {
+				if d[1] != cc {
+					targets[d[1]] = true
+				}
+			}
+			for _, d := range reDelRel.FindAllStringSubmatch(body, -1) {
+				for _, r := range m.relations {
+					if r.name == d[1] && r.target != cc {
+						targets[r.target] = true
+					}
+				}
+			}
+			if len(targets) == 0 {
+				continue
+			}
+			var names []string
+			for t := range targets {
+				names = append(names, t)
+				res.Suspects = append(res.Suspects, Suspect{
+					FromTable: m.tableName, ToTable: tableOf(t), Strong: true})
+			}
+			sort.Strings(names)
+			res.Notes = append(res.Notes, fmt.Sprintf(
+				"[強] %s: beforeDelete/afterDelete 内で %s を削除 — 手書きカスケード(実質ライフサイクル共有。切らない候補)",
+				cc, strings.Join(names, ", ")))
+		}
+	}
+
+	// with 参照(read 側の暗黙結合)は [弱]。
+	reWithArr := regexp.MustCompile(`['"]with['"]\s*=>\s*(?:array\(|\[)([^)\]]*)`)
+	reWithCall := regexp.MustCompile(`->with\(\s*['"]([\w.]+)`)
+	for _, cc := range classes {
+		m := models[cc]
+		names := map[string]bool{}
+		for _, w := range reWithArr.FindAllStringSubmatch(m.fileSrc, -1) {
+			for _, q := range regexp.MustCompile(`['"](\w+)`).FindAllStringSubmatch(w[1], -1) {
+				names[q[1]] = true
+			}
+		}
+		for _, w := range reWithCall.FindAllStringSubmatch(m.fileSrc, -1) {
+			names[strings.SplitN(w[1], ".", 2)[0]] = true
+		}
+		var hits []string
+		for n := range names {
+			for _, r := range m.relations {
+				if r.name == n && r.target != cc {
+					hits = append(hits, r.target)
+					res.Suspects = append(res.Suspects, Suspect{
+						FromTable: m.tableName, ToTable: tableOf(r.target), Strong: false})
+				}
+			}
+		}
+		if len(hits) > 0 {
+			sort.Strings(hits)
+			res.Notes = append(res.Notes, fmt.Sprintf(
+				"[弱] %s: with で %s を読む(read 側の暗黙結合)", cc, strings.Join(hits, ", ")))
+		}
 	}
 
 	// 宣言外の他モデル言及は全モデルで注記する(エッジにはしない)。

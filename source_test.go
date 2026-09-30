@@ -254,3 +254,38 @@ func TestRawSQLExtraction(t *testing.T) {
 		t.Errorf("生SQL注記が無い: %v", sc.Notes)
 	}
 }
+
+func TestYii1CascadeAndWith(t *testing.T) {
+	sc, err := ScanYii1("testdata/yii1app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cascadeNote, withNote := false, false
+	for _, n := range sc.Notes {
+		if strings.Contains(n, "手書きカスケード") && strings.Contains(n, "Comment") {
+			cascadeNote = true
+		}
+		if strings.Contains(n, "with で") && strings.Contains(n, "Comment") {
+			withNote = true
+		}
+	}
+	if !cascadeNote {
+		t.Errorf("beforeDelete の deleteAll が手書きカスケードとして出ない: %v", sc.Notes)
+	}
+	if !withNote {
+		t.Errorf("scopes の with が read 結合として出ない: %v", sc.Notes)
+	}
+	strong, weak := false, false
+	for _, s := range sc.Suspects {
+		if s.FromTable == "post" && s.ToTable == "comment" {
+			if s.Strong {
+				strong = true
+			} else {
+				weak = true
+			}
+		}
+	}
+	if !strong || !weak {
+		t.Errorf("post→comment の 強(カスケード)/弱(with) Suspect: strong=%v weak=%v", strong, weak)
+	}
+}

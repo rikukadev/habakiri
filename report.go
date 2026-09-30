@@ -42,7 +42,16 @@ type Analysis struct {
 	CrossFKs      []FK                `json:"cross_schema_fks"` // スキーマ跨ぎ(最優先で殲滅)
 	Suspects      []Suspect           `json:"suspects,omitempty"` // FK ではない結合の疑い(静的ソース由来)
 	coocNoWeight  bool                // 共起を分割グラフに算入しない(--cooc-weight=false)
+	Candidates    []Candidate         `json:"candidates,omitempty"` // 切り出し候補ランキング(--churn 指定時)
 	Notes         []string            `json:"notes"`
+}
+
+// cutPattern は切断レベル → 「切断後に書くもの」の既定パターン名。
+// 組織の語彙に合わせたい場合は --patterns で JSON({"1": "...", "2": "...", "3": "..."})を渡す。
+var cutPatterns = map[int]string{
+	1: "結果整合(outbox→イベント購読)or 読みレプリカ",
+	2: "同期コマンド + pending + 冪等キー / 存在保証 API",
+	3: "同上 + 暗黙結合の切り離し(callback/共起の後始末)",
 }
 
 // BridgeReport は橋 1 本の切断計画。
@@ -55,6 +64,7 @@ type BridgeReport struct {
 	FKs        []FK    `json:"fks"`
 	Difficulty string  `json:"difficulty"` // 易 / 中
 	CutLevel   int     `json:"cut_level"`  // EdgeReport.CutLevel と同じ定義
+	Pattern    string  `json:"pattern"`    // 切断後に書くもの(受け皿パターン名)
 }
 
 // EdgeReport は縮約後グラフの 1 エッジ(橋かどうかの印付き)。
@@ -308,6 +318,7 @@ func Analyze(sc *ScanResult, hubThreshold int) *Analysis {
 		e := edges[bp]
 		br := BridgeReport{A: bp.A, B: bp.B, Weight: e.Weight, FKs: sortFKs(e.FKs),
 			CutLevel: cutLevel(bp, e)}
+		br.Pattern = cutPatterns[br.CutLevel]
 		// 橋を切った後、両端は別ブロックに落ちる…のではなく、橋除去後の
 		// ブロック表で両端のブロックサイズを引く(橋はブロック間の辺)。
 		br.SideASize = blockTables(blockOf[bp.A])
@@ -574,6 +585,11 @@ func WriteText(w io.Writer, a *Analysis) {
 		p("")
 	}
 
+	if len(a.Candidates) > 0 {
+		WriteCandidates(w, a.Candidates, 10)
+		p("")
+	}
+
 	if len(a.CrossFKs) > 0 {
 		p("■ スキーマ跨ぎ FK(%d 本)— DDL ロックが他スキーマに波及する。最優先で切る", len(a.CrossFKs))
 		for _, fk := range a.CrossFKs {
@@ -664,6 +680,7 @@ func WriteText(w io.Writer, a *Analysis) {
 					strings.Join(fk.ChildCols, ","), null, fk.ParentTable, fk.DeleteRule, fk.Constraint)
 			}
 			p("      難易度: %s", b.Difficulty)
+	p("      切断後に書くもの: %s", b.Pattern)
 		}
 		p("")
 	} else {

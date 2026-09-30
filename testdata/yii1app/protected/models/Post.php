@@ -16,8 +16,16 @@ class Post extends CActiveRecord
         Yii::app()->db->createCommand()->update('tbl_user', array('post_count' => 0));
     }
 
+    public function scopes()
+    {
+        return array(
+            'recent' => array('with' => array('comments'), 'order' => 'id DESC'),
+        );
+    }
+
     public function beforeDelete()
     {
+        Comment::model()->deleteAll('post_id = ' . $this->id);
         foreach (Attachment::model()->findAllByAttributes(array('post_id' => $this->id)) as $a) {
             $a->delete();
         }

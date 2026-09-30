@@ -39,6 +39,8 @@ type ScanResult struct {
 	// CoocNoWeight: true なら共起を分割グラフに算入しない(baseline 用の
 	// 静的モード。レポートには出る)。--cooc-weight=false で設定。
 	CoocNoWeight bool `json:"-"`
+	// FileTables: 静的ソースのモデルファイル → テーブル名(--churn の対応付けに使う)。
+	FileTables map[string]string `json:"-"`
 }
 
 // Suspect は「FK ではないが結合している疑い」の 1 本(テーブル名ベース)。

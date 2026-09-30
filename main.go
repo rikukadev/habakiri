@@ -10,11 +10,13 @@ package main
 
 import (
 	"database/sql"
-	"io"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -43,6 +45,10 @@ func run() int {
 	services := fs.Int("services", 0, "分割案のグループ数の希望(0 = モジュラリティ最大に任せる)")
 	coocFile := fs.String("cooc", "", "同一 tx 書き込み共起のログ(MySQL general log / Postgres log / 中立形式)")
 	coocWeight := fs.Bool("cooc-weight", true, "共起を分割グラフに算入する(false = レポートのみ。baseline 用の静的モード)")
+	emitContract := fs.String("emit-contract", "", "橋の FK DROP マイグレーションのスケルトンをこのファイルへ生成")
+	patternsFile := fs.String("patterns", "", "受け皿パターン語彙の差し替え(JSON: {\"1\": \"...\", \"2\": \"...\", \"3\": \"...\"})")
+	churnDir := fs.String("churn", "", "git リポジトリからモデル変更頻度を採り、切り出し候補ランキングを出す(静的ソースと併用)")
+	critFile := fs.String("criticality", "", "テーブル → 事故コストの JSON(候補ランキングの第 3 キー)")
 	baseline := fs.String("baseline", "", "過去の --json 出力と比較し、結合の逆行(新規 FK ペア・hub 契約増・跨ぎ FK 増)があれば exit 3")
 	d2Out := fs.String("d2", "", "D2 スクリプトをこのファイルへ書き出す(d2 out.d2 out.svg で描画)")
 	htmlOut := fs.String("html", "", "図と切断計画をまとめた自己完結 HTML をこのファイルへ書き出す")
@@ -120,9 +126,52 @@ func run() int {
 		sc.CoocNoWeight = !*coocWeight
 	}
 
+	if *patternsFile != "" {
+		raw, err := os.ReadFile(*patternsFile)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, prog+":", err)
+			return 1
+		}
+		var pm map[string]string
+		if err := json.Unmarshal(raw, &pm); err != nil {
+			fmt.Fprintln(os.Stderr, prog+":", err)
+			return 1
+		}
+		for k, v := range pm {
+			if lv, err := strconv.Atoi(k); err == nil {
+				cutPatterns[lv] = v
+			}
+		}
+	}
+
 	a := Analyze(sc, *hub)
 	if *services > 0 && a.Partition != nil {
 		a.Partition.SelectLevel(*services)
+	}
+	if *churnDir != "" || *critFile != "" {
+		tChurn := map[string]int{}
+		if *churnDir != "" {
+			if len(sc.FileTables) == 0 {
+				fmt.Fprintln(os.Stderr, prog+": --churn は静的ソース(--rails/--yii1)と併用してください(ファイル→テーブル対応が要る)")
+				return 2
+			}
+			fc, err := LoadChurn(*churnDir)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, prog+":", err)
+				return 1
+			}
+			tChurn = tableChurn(sc.FileTables, fc)
+		}
+		tCrit := map[string]float64{}
+		if *critFile != "" {
+			var err error
+			tCrit, err = LoadCriticality(*critFile)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, prog+":", err)
+				return 1
+			}
+		}
+		a.Candidates = BuildCandidates(a, tChurn, tCrit)
 	}
 
 	writeFile := func(path string, write func(f *os.File)) bool {
@@ -167,6 +216,18 @@ func run() int {
 	if !writeSVGFile(*svgOut, WriteSVG) || !writeSVGFile(*svgCutOut, writeSVGCutAtLevel) ||
 		!writeSVGFile(*svgPart, WriteSVGPartition) {
 		return 1
+	}
+	if *emitContract != "" {
+		dialect := "static"
+		if *dsn != "" {
+			dialect = "mysql"
+			if strings.HasPrefix(*dsn, "postgres") {
+				dialect = "postgres"
+			}
+		}
+		if !writeFile(*emitContract, func(f *os.File) { WriteContract(f, a, dialect) }) {
+			return 1
+		}
 	}
 	if !writeFile(*d2Out, func(f *os.File) { WriteD2(f, a) }) {
 		return 1
