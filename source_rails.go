@@ -422,6 +422,10 @@ func railsToScan(dir string, models map[string]*railsModel) *ScanResult {
 			continue
 		}
 		sort.Strings(mentions)
+		for _, mc := range mentions {
+			res.Suspects = append(res.Suspects, Suspect{
+				FromTable: tableOf(models, cc), ToTable: tableOf(models, mc), Strong: m.hasCallback})
+		}
 		if m.hasCallback {
 			strongNotes = append(strongNotes,
 				fmt.Sprintf("[強] %s: callback(concern 含む)+ 宣言外の %s への言及 — 書き込み結合の疑い",

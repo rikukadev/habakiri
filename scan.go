@@ -31,6 +31,16 @@ type ScanResult struct {
 	// Notes: ソース固有の注意(静的ソースの未解決ポリモーフィック等)。
 	// Analyze がレポートの注へ合流させる。
 	Notes []string `json:"notes,omitempty"`
+	// Suspects: 宣言外の結合の疑い(静的ソースの callback / メソッド言及)。
+	// FK ではないので重み付けもグラフ演算もしないが、図には別線種で出す。
+	Suspects []Suspect `json:"suspects,omitempty"`
+}
+
+// Suspect は「FK ではないが結合している疑い」の 1 本(テーブル名ベース)。
+type Suspect struct {
+	FromTable string `json:"from_table"`
+	ToTable   string `json:"to_table"`
+	Strong    bool   `json:"strong"` // true = callback 経由(書き込み結合の疑い)
 }
 
 // Scan は DSN のスキーマを読む。

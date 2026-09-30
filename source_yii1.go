@@ -198,6 +198,10 @@ func yiiToScan(dir string, models map[string]*yiiModel) *ScanResult {
 			continue
 		}
 		sort.Strings(mentions)
+		for _, mc := range mentions {
+			res.Suspects = append(res.Suspects, Suspect{
+				FromTable: m.tableName, ToTable: tableOf(mc), Strong: reYiiCb.MatchString(m.fileSrc)})
+		}
 		if reYiiCb.MatchString(m.fileSrc) {
 			strongNotes = append(strongNotes,
 				fmt.Sprintf("[強] %s: beforeDelete/afterSave/behaviors 等 + 宣言外の %s への言及 — Yii1 はカスケードが callback に書かれがち",

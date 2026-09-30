@@ -25,9 +25,14 @@ type Analysis struct {
 	HubThreshold  int                 `json:"hub_threshold"`
 	CascadeGroups map[string][]string `json:"cascade_groups"`   // ライフサイクル一体(縮約済み)
 	Blocks        [][]string          `json:"blocks"`           // 2-辺連結成分(縮約後ノード名)
+	Edges         []EdgeReport        `json:"edges"`            // 縮約後の全エッジ(図の機械生成と外部消費用)
+	// Islands: hub 経由でしか外と繋がらない島(hub 除去後にエッジ 0 本)。
+	// 「もう hub との契約だけ整理すれば独立できる」塊で、孤立の次に自由度が高い。
+	Islands []IslandReport `json:"islands"`
 	Bridges       []BridgeReport      `json:"bridges"`          // 切断点
 	ThinSeams     []SeamReport        `json:"thinnest_seams"`   // 橋が無いときの候補
 	CrossFKs      []FK                `json:"cross_schema_fks"` // スキーマ跨ぎ(最優先で殲滅)
+	Suspects      []Suspect           `json:"suspects,omitempty"` // FK ではない結合の疑い(静的ソース由来)
 	Notes         []string            `json:"notes"`
 }
 
@@ -40,6 +45,25 @@ type BridgeReport struct {
 	SideBSize  int     `json:"side_b_size"`
 	FKs        []FK    `json:"fks"`
 	Difficulty string  `json:"difficulty"` // 易 / 中
+}
+
+// EdgeReport は縮約後グラフの 1 エッジ(橋かどうかの印付き)。
+// MaxWeight は束ねた FK の最大重み(1=NULL可 / 2=NOT NULL / 3=CASCADE)。
+// Weight が合計なのに対し、こちらは「この結合の最も強い性質」— 図の色分けに使う。
+type EdgeReport struct {
+	A         string  `json:"a"`
+	B         string  `json:"b"`
+	Weight    float64 `json:"weight"`
+	MaxWeight float64 `json:"max_weight"`
+	FKCount   int     `json:"fk_count"`
+	Bridge    bool    `json:"bridge"`
+	FKs       []FK    `json:"fks"` // 図のラベル(列名・向き)と外部消費用
+}
+
+// IslandReport は hub 経由のみで繋がる島 1 つ(CASCADE 集約なら Tables > 1)。
+type IslandReport struct {
+	Name   string `json:"name"`
+	Tables int    `json:"tables"`
 }
 
 // SeamReport は橋ではないが最も細い継ぎ目。
@@ -57,6 +81,7 @@ func Analyze(sc *ScanResult, hubThreshold int) *Analysis {
 		TableCount: len(sc.Tables),
 		FKCount:    len(sc.FKs) + len(sc.CrossFKs),
 		CrossFKs:   sc.CrossFKs,
+		Suspects:   sc.Suspects,
 		Notes:      append([]string(nil), sc.Notes...), // ソース固有の注意を合流
 	}
 
@@ -111,6 +136,44 @@ func Analyze(sc *ScanResult, hubThreshold int) *Analysis {
 	a.Blocks = Blocks(edges, bridges)
 	blockOf := BlockOf(a.Blocks)
 
+	// 縮約後の全エッジ(図とJSON消費者向け)。決定的な順序で。
+	bridgeSet := map[Pair]bool{}
+	for _, bp := range bridges {
+		bridgeSet[bp] = true
+	}
+	// Contract の再束ねで FK の並びが map 順に揺れるので、ここで固定する
+	// (--d2 / --svg のバイト決定性はこの順序に依存する)。
+	sortFKs := func(fks []FK) []FK {
+		out := append([]FK(nil), fks...)
+		sort.Slice(out, func(i, j int) bool {
+			if out[i].ChildTable != out[j].ChildTable {
+				return out[i].ChildTable < out[j].ChildTable
+			}
+			if ci, cj := strings.Join(out[i].ChildCols, ","), strings.Join(out[j].ChildCols, ","); ci != cj {
+				return ci < cj
+			}
+			return out[i].Constraint < out[j].Constraint
+		})
+		return out
+	}
+	for p, e := range edges {
+		maxW := 0.0
+		for _, fk := range e.FKs {
+			if w := fkWeight(fk); w > maxW {
+				maxW = w
+			}
+		}
+		a.Edges = append(a.Edges, EdgeReport{
+			A: p.A, B: p.B, Weight: e.Weight, MaxWeight: maxW,
+			FKCount: len(e.FKs), Bridge: bridgeSet[p], FKs: sortFKs(e.FKs)})
+	}
+	sort.Slice(a.Edges, func(i, j int) bool {
+		if a.Edges[i].A != a.Edges[j].A {
+			return a.Edges[i].A < a.Edges[j].A
+		}
+		return a.Edges[i].B < a.Edges[j].B
+	})
+
 	// 縮約ノード 1 個が実テーブル N 個を含むことがあるので、人に見せる
 	// サイズは常にテーブル数で数える(ノード数だと過小に見える)。
 	tableCount := func(node string) int {
@@ -129,7 +192,7 @@ func Analyze(sc *ScanResult, hubThreshold int) *Analysis {
 
 	for _, bp := range bridges {
 		e := edges[bp]
-		br := BridgeReport{A: bp.A, B: bp.B, Weight: e.Weight, FKs: e.FKs}
+		br := BridgeReport{A: bp.A, B: bp.B, Weight: e.Weight, FKs: sortFKs(e.FKs)}
 		// 橋を切った後、両端は別ブロックに落ちる…のではなく、橋除去後の
 		// ブロック表で両端のブロックサイズを引く(橋はブロック間の辺)。
 		br.SideASize = blockTables(blockOf[bp.A])
@@ -145,6 +208,54 @@ func Analyze(sc *ScanResult, hubThreshold int) *Analysis {
 	}
 	sort.Slice(a.Bridges, func(i, j int) bool {
 		return a.Bridges[i].Weight < a.Bridges[j].Weight // 軽いものから着手
+	})
+
+	// hub 経由のみの島: どのブロックにも孤立にも hub にも入らないテーブル。
+	// CASCADE 集約の代表で畳んで数える。DB スキャンでは大物(sales 系など)が
+	// ここに落ちるので、図に出さないと「ほぼ空のグラフ」に見えてしまう。
+	inBlocks := map[string]bool{}
+	for _, block := range a.Blocks {
+		for _, n := range block {
+			inBlocks[n] = true
+			for _, m := range a.CascadeGroups[n] {
+				inBlocks[m] = true
+			}
+		}
+	}
+	isolatedSet := map[string]bool{}
+	for _, t := range a.Isolated {
+		isolatedSet[t] = true
+	}
+	hubSet := map[string]bool{}
+	for _, h := range a.Hubs {
+		hubSet[h.Node] = true
+	}
+	memberRep := map[string]string{}
+	for root, ms := range a.CascadeGroups {
+		for _, m := range ms {
+			memberRep[m] = root
+		}
+	}
+	islandSeen := map[string]bool{}
+	for _, t := range sc.Tables {
+		if inBlocks[t] || isolatedSet[t] || hubSet[t] {
+			continue
+		}
+		name, tables := t, 1
+		if rep, ok := memberRep[t]; ok {
+			name, tables = rep, len(a.CascadeGroups[rep])
+		}
+		if islandSeen[name] {
+			continue
+		}
+		islandSeen[name] = true
+		a.Islands = append(a.Islands, IslandReport{Name: name, Tables: tables})
+	}
+	sort.Slice(a.Islands, func(i, j int) bool {
+		if a.Islands[i].Tables != a.Islands[j].Tables {
+			return a.Islands[i].Tables > a.Islands[j].Tables
+		}
+		return a.Islands[i].Name < a.Islands[j].Name
 	})
 
 	for _, e := range ThinnestSeams(edges, bridges, 5) {
@@ -197,6 +308,18 @@ func WriteText(w io.Writer, a *Analysis) {
 		sort.Strings(roots)
 		for _, r := range roots {
 			p("  [%s] %s", r, strings.Join(a.CascadeGroups[r], ", "))
+		}
+		p("")
+	}
+
+	if len(a.Islands) > 0 {
+		p("■ hub 経由のみで繋がる島(%d)— hub との参照を値化すれば独立できる", len(a.Islands))
+		for _, is := range a.Islands {
+			if is.Tables > 1 {
+				p("  %s (+%d)", is.Name, is.Tables-1)
+			} else {
+				p("  %s", is.Name)
+			}
 		}
 		p("")
 	}

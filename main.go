@@ -10,6 +10,7 @@ package main
 
 import (
 	"database/sql"
+	"io"
 	"flag"
 	"fmt"
 	"os"
@@ -35,6 +36,10 @@ func run() int {
 	yii1Dir := fs.String("yii1", "", "Yii 1.x アプリのルート(または protected/models)を静的に読む。DB 接続不要")
 	jsonOut := fs.Bool("json", false, "JSON で出力")
 	mermaid := fs.String("mermaid", "", "Mermaid 図をこのファイルへ書き出す")
+	svgOut := fs.String("svg", "", "切る前の E-R 図(SVG)をこのファイルへ機械生成する")
+	svgCutOut := fs.String("svg-cut", "", "切った後の E-R 図(橋を除去した世界)をこのファイルへ書き出す")
+	d2Out := fs.String("d2", "", "D2 スクリプトをこのファイルへ書き出す(d2 out.d2 out.svg で描画)")
+	htmlOut := fs.String("html", "", "図と切断計画をまとめた自己完結 HTML をこのファイルへ書き出す")
 	hub := fs.Int("hub", 0, "hub 判定の次数閾値(0 = 自動: max(6, ノード数の 15%))")
 	showVersion := fs.Bool("version", false, "バージョン表示")
 	fs.Usage = func() {
@@ -102,17 +107,52 @@ func run() int {
 
 	a := Analyze(sc, *hub)
 
-	if *mermaid != "" {
-		f, err := os.Create(*mermaid)
+	writeFile := func(path string, write func(f *os.File)) bool {
+		if path == "" {
+			return true
+		}
+		f, err := os.Create(path)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, prog+":", err)
-			return 1
+			return false
 		}
-		WriteMermaid(f, a)
+		write(f)
 		if err := f.Close(); err != nil {
 			fmt.Fprintln(os.Stderr, prog+":", err)
-			return 1
+			return false
 		}
+		return true
+	}
+	if !writeFile(*mermaid, func(f *os.File) { WriteMermaid(f, a) }) {
+		return 1
+	}
+	writeSVGFile := func(path string, render func(io.Writer, *Analysis) error) bool {
+		if path == "" {
+			return true
+		}
+		f, err := os.Create(path)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, prog+":", err)
+			return false
+		}
+		if err := render(f, a); err != nil {
+			fmt.Fprintln(os.Stderr, prog+":", err)
+			return false
+		}
+		if err := f.Close(); err != nil {
+			fmt.Fprintln(os.Stderr, prog+":", err)
+			return false
+		}
+		return true
+	}
+	if !writeSVGFile(*svgOut, WriteSVG) || !writeSVGFile(*svgCutOut, WriteSVGCut) {
+		return 1
+	}
+	if !writeFile(*d2Out, func(f *os.File) { WriteD2(f, a) }) {
+		return 1
+	}
+	if !writeFile(*htmlOut, func(f *os.File) { WriteHTML(f, a) }) {
+		return 1
 	}
 
 	if *jsonOut {
