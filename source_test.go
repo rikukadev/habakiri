@@ -1,6 +1,10 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -477,8 +481,8 @@ func TestScanYii1Inheritance(t *testing.T) {
 	idx := fkIndex(sc.FKs)
 	notes := strings.Join(sc.Notes, "\n")
 
-	t.Run("テーブルは具体的なモデルだけ(基底クラス・動的な名前を数えない)", func(t *testing.T) {
-		want := "accounts,answers,contacts,forms,settings"
+	t.Run("テーブルは具体的なモデルとテーブル族だけ(基底クラス・テスト・決められない名前を数えない)", func(t *testing.T) {
+		want := "accounts,answers,contacts,events,forms,leads,responses_*,settings,snapshots_*_v,timings_*"
 		if got := strings.Join(sc.Tables, ","); got != want {
 			t.Errorf("tables = %s, want %s", got, want)
 		}
@@ -501,27 +505,92 @@ func TestScanYii1Inheritance(t *testing.T) {
 		}
 	})
 
-	t.Run("動的なテーブル名は判定不能(#46-2)", func(t *testing.T) {
-		for key := range idx {
-			if strings.Contains(key, "responses") || strings.Contains(key, "Response") {
-				t.Errorf("動的なテーブル名への FK を作った: %s", key)
+	t.Run("テーブル族は静的な 1 頂点(#53)", func(t *testing.T) {
+		for key, why := range map[string]string{
+			"answers(response_id)→responses_*": "abstract な族の基底への関連",
+			"timings_*(form_id)→forms":         "族のモデル自身の関連",
+		} {
+			if _, ok := idx[key]; !ok {
+				t.Errorf("%s が無い(%s): %v", key, why, idx)
 			}
 		}
-		for _, want := range []string{"Response(テーブル族 responses_*)", "Timing(名前を静的に読めない)",
-			"Answer.response → Response(テーブル族 responses_*)"} {
-			if !strings.Contains(notes, want) {
-				t.Errorf("注に %q が無い: %v", want, sc.Notes)
+		fams := map[string]string{}
+		for _, f := range sc.Families {
+			fams[f.Vertex()] = strings.Join(f.Models, ",")
+		}
+		want := map[string]string{"responses_*": "Response", "snapshots_*_v": "Snapshot", "timings_*": "Timing"}
+		if !reflect.DeepEqual(fams, want) {
+			t.Errorf("families = %v, want %v", fams, want)
+		}
+	})
+
+	t.Run("テーブル名を getter から辿る($this->x → getX())", func(t *testing.T) {
+		// Timing: $this->form->timingsTable(関連の相手の getter)
+		// Snapshot: $this->source->snapshotTable(型注釈のあるプロパティの getter)
+		for _, fam := range []string{"timings_*", "snapshots_*_v"} {
+			if !slices.Contains(sc.Tables, fam) {
+				t.Errorf("%s が無い: %v", fam, sc.Tables)
 			}
 		}
 	})
 
-	t.Run("実行時に組み立てる relations は黙って 0 本にしない(#47-2)", func(t *testing.T) {
-		if !strings.Contains(notes, "relations() を静的に読めない") || !strings.Contains(notes, "AppModel(使うモデル 1)") {
-			t.Errorf("静的に読めない relations の注: %v", sc.Notes)
+	t.Run("名前を外から渡すモデルは判定不能", func(t *testing.T) {
+		if !strings.Contains(notes, "Wrapper(名前を外から渡す)") {
+			t.Errorf("注: %v", sc.Notes)
 		}
-		// コメント付きの空の relations()(Setting)は読めている
-		if strings.Contains(notes, "Setting(") {
-			t.Errorf("空の relations() を読めない扱いにした: %v", sc.Notes)
+	})
+
+	t.Run("アプリ自体が tests/ の下にあっても読む", func(t *testing.T) {
+		dir := filepath.Join(t.TempDir(), "tests", "app")
+		if err := os.CopyFS(dir, os.DirFS("testdata/yii1inherit")); err != nil {
+			t.Fatal(err)
+		}
+		sc2, err := ScanYii1(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, want := strings.Join(sc2.Tables, ","), strings.Join(sc.Tables, ","); got != want {
+			t.Errorf("tables = %s, want %s", got, want)
+		}
+	})
+
+	t.Run("テストのクラスは読まない・同名の注記は ActiveRecord だけ", func(t *testing.T) {
+		if slices.Contains(sc.Tables, "mocks") {
+			t.Error("tests 配下のモックをテーブルにした")
+		}
+		if strings.Contains(notes, "SearchForm") {
+			t.Errorf("ActiveRecord でない同名クラスを注記した: %v", sc.Notes)
+		}
+	})
+
+	t.Run("ループで組み立てる relations は黙って 0 本にしない(#47-2)", func(t *testing.T) {
+		if !strings.Contains(notes, "relations() の宣言をループで組み立てる") || !strings.Contains(notes, "AppModel(使うモデル 1)") {
+			t.Errorf("ループで組み立てる relations の注: %v", sc.Notes)
+		}
+		// ループの外に書かれた宣言は読む
+		if _, ok := idx["settings(owner_id)→accounts"]; !ok {
+			t.Errorf("ループの外の宣言が無い: %v", idx)
+		}
+		// コメント付きの空の relations()(Setting)と、変数に組み立てるだけの
+		// relations()(Event)は読めている
+		for _, c := range []string{"Setting(", "Event("} {
+			if strings.Contains(notes, c) {
+				t.Errorf("%s を読めない扱いにした: %v", c, sc.Notes)
+			}
+		}
+	})
+
+	t.Run("変数・array_merge・代入・STAT・parent::relations() の宣言を読む", func(t *testing.T) {
+		for key, why := range map[string]string{
+			"events(owner_id)→contacts":   "array_merge に渡した配列",
+			"events(account_id)→accounts": "$r['x'] = array(...)",
+			"answers(event_id)→events":    "STAT は相手側の FK 列",
+			"leads(account_id)→accounts":  "parent::relations() から継承",
+			"leads(owner_id)→contacts":    "parent::relations() に足した宣言",
+		} {
+			if _, ok := idx[key]; !ok {
+				t.Errorf("%s が無い(%s): %v", key, why, idx)
+			}
 		}
 	})
 

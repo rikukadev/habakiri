@@ -67,7 +67,21 @@ type ScanResult struct {
 	LogicalTables  []string `json:"-"`
 	// FileTables: 静的ソースのモデルファイル → テーブル名(--churn の対応付けに使う)。
 	FileTables map[string]string `json:"-"`
+	// Families: テーブル族(名前を「文字列 + 実行時の ID」で組むテーブル群)。
+	// 静的ソースは族を 1 頂点 <接頭辞>*<後ろ> として扱う。DB と合流すると、
+	// DB の <接頭辞><数字><後ろ> をその頂点に束ねる(merge.go の bundleFamilies)。
+	Families []TableFamily `json:"-"`
 }
+
+// TableFamily は 1 つのテーブル族。
+type TableFamily struct {
+	Prefix string   // ID より前(tablePrefix を前置した後)
+	Suffix string   // ID より後ろ('{{a_' . $id . '_b}}' の _b)。多くは空
+	Models []string // 族のテーブルを使うモデルのクラス名
+}
+
+// Vertex は族を束ねた頂点の名前。
+func (f TableFamily) Vertex() string { return f.Prefix + "*" + f.Suffix }
 
 // Suspect は「FK ではないが結合している疑い」の 1 本(テーブル名ベース)。
 type Suspect struct {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -215,5 +216,136 @@ func TestCLISourceExclusion(t *testing.T) {
 	}
 	if code := run("habakiri", []string{"--yii1", "testdata/yii1app", "--dump-schema", "x.json"}, &stdout, &stderr); code != 2 {
 		t.Errorf("静的ソースだけの --dump-schema は exit 2: got %d", code)
+	}
+}
+
+// famFixture: 静的ソースには族 resp_*(resp_ + ID)があり、DB にはその実体が
+// resp_1・resp_2 として 2 つある。どちらも forms への FK を持つ。
+func famFixture() (*ScanResult, *ScanResult) {
+	phys := &ScanResult{Schema: "app", Dialect: "mysql",
+		Tables: []string{"forms", "resp_1", "resp_2", "old_resp_1_2024", "resp_log"},
+		FKs: []FK{
+			physFK("fk_r1_form", "resp_1", "form_id", "forms", "CASCADE", true),
+			physFK("fk_r2_form", "resp_2", "form_id", "forms", "CASCADE", true),
+		}}
+	logic := &ScanResult{Schema: "yii1:app",
+		Tables:   []string{"forms", "resp_*"},
+		Families: []TableFamily{{Prefix: "resp_", Models: []string{"Resp"}}},
+		FKs: []FK{
+			yiiFK("resp_*", "form_id", "forms", "protected/models/Resp.php:8"),
+		}}
+	return phys, logic
+}
+
+func TestMergeBundlesFamily(t *testing.T) {
+	sc := MergeScans(famFixture())
+	idx := fkIndex(sc.FKs)
+
+	t.Run("DB の resp_<数字> を族の頂点に束ねる", func(t *testing.T) {
+		for _, tbl := range sc.Tables {
+			if tbl == "resp_1" || tbl == "resp_2" {
+				t.Errorf("束ねたテーブル %s が残った: %v", tbl, sc.Tables)
+			}
+		}
+		// 数字だけでない名前(退避テーブル・別の表)は束ねない
+		for _, want := range []string{"old_resp_1_2024", "resp_log", "resp_*"} {
+			if !slices.Contains(sc.Tables, want) {
+				t.Errorf("%s が無い: %v", want, sc.Tables)
+			}
+		}
+		if !slices.Contains(sc.PhysicalTables, "resp_*") {
+			t.Errorf("族の頂点が DB から見えていない: %v", sc.PhysicalTables)
+		}
+	})
+
+	t.Run("同じ関係の DB の FK は 1 本に畳み、宣言と突き合う", func(t *testing.T) {
+		fk, ok := idx["resp_*(form_id)→forms"]
+		if !ok {
+			t.Fatalf("族の FK が無い: %v", idx)
+		}
+		var phys, logic int
+		for _, ev := range fk.Evidences {
+			if isLogicalSource(ev.Source) {
+				logic++
+			} else {
+				phys++
+			}
+		}
+		if phys != 2 || logic != 1 || !fk.Enforced() {
+			t.Errorf("証拠 physical=%d logical=%d enforced=%v, want 2 1 true", phys, logic, fk.Enforced())
+		}
+		n := 0
+		for _, f := range sc.FKs {
+			if f.ChildTable == "resp_*" {
+				n++
+			}
+		}
+		if n != 1 {
+			t.Errorf("族の FK が %d 本(1 本に畳んでいない)", n)
+		}
+	})
+
+	t.Run("束ねたことを注記する", func(t *testing.T) {
+		if !strings.Contains(strings.Join(sc.Notes, "\n"), "テーブル族 resp_*: DB のテーブル 2 個(resp_1, resp_2)を 1 頂点に束ねた") {
+			t.Errorf("注: %v", sc.Notes)
+		}
+	})
+}
+
+// 束ね方が一意に決まらなければ束ねない(族の頂点は DB から見えないまま)。
+func TestMergeFamilyUndetermined(t *testing.T) {
+	notesOf := func(phys, logic *ScanResult) (*ScanResult, string) {
+		sc := MergeScans(phys, logic)
+		return sc, strings.Join(sc.Notes, "\n")
+	}
+
+	t.Run("DB に当たるテーブルが無い", func(t *testing.T) {
+		phys, logic := famFixture()
+		phys.Tables, phys.FKs = []string{"forms"}, nil
+		sc, notes := notesOf(phys, logic)
+		if !strings.Contains(notes, "テーブル族 resp_*: DB に resp_<数字> のテーブルが無い") {
+			t.Errorf("注: %s", notes)
+		}
+		if slices.Contains(sc.PhysicalTables, "resp_*") {
+			t.Error("DB に無い族の頂点を DB が見たことにした")
+		}
+	})
+
+	t.Run("具体的なモデルのテーブルと重なる", func(t *testing.T) {
+		phys, logic := famFixture()
+		logic.Tables = append(logic.Tables, "resp_2") // resp_2 は別のモデルが持つ
+		sc, notes := notesOf(phys, logic)
+		if !strings.Contains(notes, "具体的なモデルのテーブルと重なる(resp_2)") {
+			t.Errorf("注: %s", notes)
+		}
+		if !slices.Contains(sc.Tables, "resp_1") {
+			t.Error("決められないのに束ねた")
+		}
+	})
+
+	t.Run("接頭辞の有無で 2 通りに当たる", func(t *testing.T) {
+		// DB の接頭辞 tbl_ は静的なテーブルから推定される。resp_1 と tbl_resp_1 の両方がある
+		phys := &ScanResult{Schema: "app", Dialect: "mysql",
+			Tables: []string{"resp_1", "tbl_forms", "tbl_resp_1", "tbl_users"}}
+		logic := &ScanResult{Schema: "yii1:app",
+			Tables:   []string{"forms", "resp_*", "users"},
+			Families: []TableFamily{{Prefix: "resp_", Models: []string{"Resp"}}}}
+		_, notes := notesOf(phys, logic)
+		if !strings.Contains(notes, "接頭辞の有無で 2 通りの候補がある") {
+			t.Errorf("注: %s", notes)
+		}
+	})
+}
+
+// 推定した接頭辞付きの DB 名(tbl_resp_1)も族に束ねる。
+func TestMergeFamilyWithInferredPrefix(t *testing.T) {
+	phys := &ScanResult{Schema: "app", Dialect: "mysql",
+		Tables: []string{"tbl_forms", "tbl_resp_1", "tbl_resp_2", "tbl_users"}}
+	logic := &ScanResult{Schema: "yii1:app",
+		Tables:   []string{"forms", "resp_*", "users"},
+		Families: []TableFamily{{Prefix: "resp_", Models: []string{"Resp"}}}}
+	sc := MergeScans(phys, logic)
+	if slices.Contains(sc.Tables, "tbl_resp_1") || !slices.Contains(sc.PhysicalTables, "resp_*") {
+		t.Errorf("tables=%v physical=%v", sc.Tables, sc.PhysicalTables)
 	}
 }
