@@ -118,12 +118,21 @@ func ScanRails(dir string) (*ScanResult, error) {
 
 	models := map[string]*railsModel{}
 	concerns := map[string]*railsConcern{}
+	fileOf := map[string]string{} // class → file
 	for _, f := range files {
 		raw, err := os.ReadFile(f)
 		if err != nil {
 			return nil, err
 		}
+		before := len(models)
 		parseRailsFile(string(raw), models, concerns)
+		if len(models) > before {
+			for c, m := range models {
+				if m.fileSrc == string(raw) && fileOf[c] == "" {
+					fileOf[c] = f
+				}
+			}
+		}
 	}
 
 	// concern の中身(関連宣言・callback・言及)を include 先のモデルへ伝播する。
@@ -143,7 +152,14 @@ func ScanRails(dir string) (*ScanResult, error) {
 		}
 	}
 
-	return railsToScan(dir, models), nil
+	res := railsToScan(dir, models)
+	res.FileTables = map[string]string{}
+	for c, f := range fileOf {
+		if isARModel(models, c) && !models[c].abstract && c != "ApplicationRecord" {
+			res.FileTables[f] = tableOf(models, c)
+		}
+	}
+	return res, nil
 }
 
 // joinContinuations: 行末カンマ(や開き括弧)で折り返された宣言を 1 行に畳む。

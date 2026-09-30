@@ -152,3 +152,21 @@ func TestCoocHubSuppression(t *testing.T) {
 		t.Errorf("共起 hub 注記が無い: %v", a.Notes)
 	}
 }
+
+func TestBuildCandidates(t *testing.T) {
+	a := Analyze(partitionFixture(), 5)
+	cands := BuildCandidates(a,
+		map[string]int{"posts": 50, "post_likes": 30, "orders": 5},
+		map[string]float64{"orders": 9})
+	if len(cands) == 0 {
+		t.Fatal("候補が空")
+	}
+	// 同じ橋 1 本同士の比較: post_likes(churn 30)が badges(churn 0)より上
+	pos := map[string]int{}
+	for i, c := range cands {
+		pos[c.Unit] = i
+	}
+	if pos["post_likes"] > pos["badges"] {
+		t.Errorf("churn が順位に効いていない: %+v", cands)
+	}
+}

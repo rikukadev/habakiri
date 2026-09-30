@@ -42,6 +42,7 @@ type Analysis struct {
 	CrossFKs      []FK                `json:"cross_schema_fks"` // スキーマ跨ぎ(最優先で殲滅)
 	Suspects      []Suspect           `json:"suspects,omitempty"` // FK ではない結合の疑い(静的ソース由来)
 	coocNoWeight  bool                // 共起を分割グラフに算入しない(--cooc-weight=false)
+	Candidates    []Candidate         `json:"candidates,omitempty"` // 切り出し候補ランキング(--churn 指定時)
 	Notes         []string            `json:"notes"`
 }
 
@@ -581,6 +582,11 @@ func WriteText(w io.Writer, a *Analysis) {
 			p("  S%d(%d テーブル)%s%s", i+1, gr.Tables, hubs, glue)
 			p("      %s%s", strings.Join(units, ", "), more)
 		}
+		p("")
+	}
+
+	if len(a.Candidates) > 0 {
+		WriteCandidates(w, a.Candidates, 10)
 		p("")
 	}
 

@@ -18,6 +18,7 @@ import (
 )
 
 type yiiModel struct {
+	path      string
 	class     string
 	tableName string // tableName() の戻り(無ければクラス名)
 	fileSrc   string
@@ -94,12 +95,20 @@ func ScanYii1(dir string) (*ScanResult, error) {
 			m.relations = append(m.relations, yiiRelation{name: rm[1], kind: rm[2], target: rm[3], fkSpec: rm[4]})
 		}
 		models[m.class] = m
+		m.path = f
 	}
 	if len(models) == 0 {
 		return nil, fmt.Errorf("%s に CActiveRecord 系のモデルが見つかりません", modelsDir)
 	}
 
-	return yiiToScan(dir, models), nil
+	res := yiiToScan(dir, models)
+	res.FileTables = map[string]string{}
+	for _, m := range models {
+		if m.path != "" {
+			res.FileTables[m.path] = m.tableName
+		}
+	}
+	return res, nil
 }
 
 func yiiToScan(dir string, models map[string]*yiiModel) *ScanResult {
