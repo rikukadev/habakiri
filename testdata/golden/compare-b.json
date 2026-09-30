@@ -1,0 +1,1497 @@
+{
+  "schema": "ms_b+yii1:multisource",
+  "table_count": 15,
+  "fk_count": 20,
+  "isolated_tables": null,
+  "shared_kernel": [
+    {
+      "node": "account",
+      "degree": 7
+    },
+    {
+      "node": "purchase",
+      "degree": 6
+    }
+  ],
+  "hub_threshold": 6,
+  "cascade_groups": {},
+  "blocks": [
+    [
+      "article"
+    ],
+    [
+      "article_tag"
+    ],
+    [
+      "attachment"
+    ],
+    [
+      "category"
+    ],
+    [
+      "comment"
+    ],
+    [
+      "customer"
+    ],
+    [
+      "invoice"
+    ],
+    [
+      "payment"
+    ],
+    [
+      "product"
+    ],
+    [
+      "purchase_item"
+    ],
+    [
+      "tag"
+    ]
+  ],
+  "edges": [
+    {
+      "a": "article",
+      "b": "article_tag",
+      "weight": 1,
+      "max_weight": 1,
+      "fk_count": 1,
+      "bridge": true,
+      "cut_level": 2,
+      "fks": [
+        {
+          "constraint": "yii1:article_tag(mm)",
+          "child_table": "article_tag",
+          "child_columns": [
+            "article_id"
+          ],
+          "parent_table": "article",
+          "delete_rule": "NO ACTION",
+          "all_not_null": false
+        }
+      ]
+    },
+    {
+      "a": "article",
+      "b": "attachment",
+      "weight": 1,
+      "max_weight": 1,
+      "fk_count": 1,
+      "bridge": true,
+      "cut_level": 1,
+      "fks": [
+        {
+          "constraint": "yii1:Attachment→Article",
+          "child_table": "attachment",
+          "child_columns": [
+            "article_id"
+          ],
+          "parent_table": "article",
+          "delete_rule": "NO ACTION",
+          "all_not_null": false
+        }
+      ]
+    },
+    {
+      "a": "article",
+      "b": "category",
+      "weight": 1,
+      "max_weight": 1,
+      "fk_count": 1,
+      "bridge": true,
+      "cut_level": 1,
+      "fks": [
+        {
+          "constraint": "yii1:Article→Category",
+          "child_table": "article",
+          "child_columns": [
+            "category_id"
+          ],
+          "parent_table": "category",
+          "delete_rule": "NO ACTION",
+          "all_not_null": false
+        }
+      ]
+    },
+    {
+      "a": "article",
+      "b": "comment",
+      "weight": 1,
+      "max_weight": 1,
+      "fk_count": 1,
+      "bridge": true,
+      "cut_level": 2,
+      "fks": [
+        {
+          "constraint": "yii1:Comment→Article",
+          "child_table": "comment",
+          "child_columns": [
+            "article_id"
+          ],
+          "parent_table": "article",
+          "delete_rule": "NO ACTION",
+          "all_not_null": false
+        }
+      ]
+    },
+    {
+      "a": "article_tag",
+      "b": "tag",
+      "weight": 1,
+      "max_weight": 1,
+      "fk_count": 1,
+      "bridge": true,
+      "cut_level": 1,
+      "fks": [
+        {
+          "constraint": "yii1:article_tag(mm)",
+          "child_table": "article_tag",
+          "child_columns": [
+            "tag_id"
+          ],
+          "parent_table": "tag",
+          "delete_rule": "NO ACTION",
+          "all_not_null": false
+        }
+      ]
+    },
+    {
+      "a": "customer",
+      "b": "invoice",
+      "weight": 2,
+      "max_weight": 2,
+      "fk_count": 1,
+      "bridge": true,
+      "cut_level": 2,
+      "fks": [
+        {
+          "constraint": "invoice_customer_id_fkey",
+          "child_table": "invoice",
+          "child_columns": [
+            "customer_id"
+          ],
+          "parent_table": "customer",
+          "delete_rule": "NO ACTION",
+          "all_not_null": true
+        }
+      ]
+    },
+    {
+      "a": "customer",
+      "b": "payment",
+      "weight": 1,
+      "max_weight": 1,
+      "fk_count": 1,
+      "bridge": true,
+      "cut_level": 1,
+      "fks": [
+        {
+          "constraint": "payment_customer_id_fkey",
+          "child_table": "payment",
+          "child_columns": [
+            "customer_id"
+          ],
+          "parent_table": "customer",
+          "delete_rule": "NO ACTION",
+          "all_not_null": false
+        }
+      ]
+    },
+    {
+      "a": "product",
+      "b": "purchase_item",
+      "weight": 2,
+      "max_weight": 2,
+      "fk_count": 1,
+      "bridge": true,
+      "cut_level": 2,
+      "fks": [
+        {
+          "constraint": "purchase_item_product_id_fkey",
+          "child_table": "purchase_item",
+          "child_columns": [
+            "product_id"
+          ],
+          "parent_table": "product",
+          "delete_rule": "NO ACTION",
+          "all_not_null": true
+        }
+      ]
+    }
+  ],
+  "islands": [
+    {
+      "name": "audit_log",
+      "tables": 1
+    },
+    {
+      "name": "shipment",
+      "tables": 1
+    }
+  ],
+  "hub_contracts": [
+    {
+      "unit": "article",
+      "unit_tables": 1,
+      "hub": "account",
+      "to_hub_fks": 1,
+      "from_hub_fks": 0,
+      "not_null_fks": 0,
+      "level": 1
+    },
+    {
+      "unit": "attachment",
+      "unit_tables": 1,
+      "hub": "account",
+      "to_hub_fks": 1,
+      "from_hub_fks": 0,
+      "not_null_fks": 0,
+      "level": 1
+    },
+    {
+      "unit": "audit_log",
+      "unit_tables": 1,
+      "hub": "account",
+      "to_hub_fks": 1,
+      "from_hub_fks": 0,
+      "not_null_fks": 0,
+      "level": 1
+    },
+    {
+      "unit": "comment",
+      "unit_tables": 1,
+      "hub": "account",
+      "to_hub_fks": 1,
+      "from_hub_fks": 0,
+      "not_null_fks": 0,
+      "level": 1
+    },
+    {
+      "unit": "customer",
+      "unit_tables": 1,
+      "hub": "account",
+      "to_hub_fks": 1,
+      "from_hub_fks": 0,
+      "not_null_fks": 1,
+      "level": 2
+    },
+    {
+      "unit": "customer",
+      "unit_tables": 1,
+      "hub": "purchase",
+      "to_hub_fks": 0,
+      "from_hub_fks": 1,
+      "not_null_fks": 1,
+      "level": 2
+    },
+    {
+      "unit": "invoice",
+      "unit_tables": 1,
+      "hub": "account",
+      "to_hub_fks": 1,
+      "from_hub_fks": 0,
+      "not_null_fks": 0,
+      "level": 1
+    },
+    {
+      "unit": "invoice",
+      "unit_tables": 1,
+      "hub": "purchase",
+      "to_hub_fks": 1,
+      "from_hub_fks": 0,
+      "not_null_fks": 1,
+      "level": 2
+    },
+    {
+      "unit": "payment",
+      "unit_tables": 1,
+      "hub": "purchase",
+      "to_hub_fks": 1,
+      "from_hub_fks": 0,
+      "not_null_fks": 1,
+      "level": 2
+    },
+    {
+      "unit": "purchase_item",
+      "unit_tables": 1,
+      "hub": "purchase",
+      "to_hub_fks": 1,
+      "from_hub_fks": 0,
+      "not_null_fks": 1,
+      "level": 2
+    },
+    {
+      "unit": "shipment",
+      "unit_tables": 1,
+      "hub": "purchase",
+      "to_hub_fks": 1,
+      "from_hub_fks": 0,
+      "not_null_fks": 0,
+      "level": 1
+    }
+  ],
+  "cooc": [
+    {
+      "a": "article",
+      "b": "article_tag",
+      "count": 2,
+      "npmi": 0.31739380551401475,
+      "has_fk": true,
+      "bridge": true
+    },
+    {
+      "a": "article",
+      "b": "comment",
+      "count": 1,
+      "npmi": 0.2218487496163564,
+      "has_fk": true,
+      "bridge": true
+    },
+    {
+      "a": "article",
+      "b": "product",
+      "count": 3,
+      "npmi": 0.424283357506555,
+      "has_fk": false,
+      "bridge": false
+    },
+    {
+      "a": "payment",
+      "b": "purchase",
+      "count": 2,
+      "npmi": 0.5693234419266069,
+      "has_fk": false,
+      "bridge": false
+    },
+    {
+      "a": "payment",
+      "b": "purchase_item",
+      "count": 2,
+      "npmi": 0.7480703635874079,
+      "has_fk": false,
+      "bridge": false
+    },
+    {
+      "a": "purchase",
+      "b": "purchase_item",
+      "count": 3,
+      "npmi": 0.7610560044063084,
+      "has_fk": false,
+      "bridge": false
+    },
+    {
+      "a": "purchase",
+      "b": "shipment",
+      "count": 1,
+      "npmi": 0.39794000867203755,
+      "has_fk": false,
+      "bridge": false
+    }
+  ],
+  "partition": {
+    "groups": [
+      {
+        "name": "account 圏",
+        "tables": 7,
+        "units": [
+          "article",
+          "article_tag",
+          "attachment",
+          "audit_log",
+          "category",
+          "comment",
+          "tag"
+        ],
+        "hubs": [
+          "account"
+        ],
+        "glue": {
+          "FK": 5,
+          "hub契約": 4
+        }
+      },
+      {
+        "name": "payment",
+        "tables": 3,
+        "units": [
+          "payment",
+          "product",
+          "purchase_item"
+        ],
+        "hubs": null,
+        "glue": {
+          "FK": 1,
+          "共起": 1
+        }
+      },
+      {
+        "name": "purchase 圏",
+        "tables": 3,
+        "units": [
+          "customer",
+          "invoice",
+          "shipment"
+        ],
+        "hubs": [
+          "purchase"
+        ],
+        "glue": {
+          "FK": 1,
+          "hub契約": 3
+        }
+      }
+    ],
+    "modularity": 0.43854299178069617,
+    "max_modularity": 0.43854299178069617,
+    "levels": [
+      {
+        "k": 1,
+        "modularity": -4.440892098500626e-16,
+        "groups": [
+          {
+            "name": "account 圏",
+            "tables": 13,
+            "units": [
+              "article",
+              "article_tag",
+              "attachment",
+              "audit_log",
+              "category",
+              "comment",
+              "customer",
+              "invoice",
+              "payment",
+              "product",
+              "purchase_item",
+              "shipment",
+              "tag"
+            ],
+            "hubs": [
+              "account",
+              "purchase"
+            ],
+            "glue": {
+              "FK": 8,
+              "hub契約": 11,
+              "共起": 2
+            }
+          }
+        ]
+      },
+      {
+        "k": 2,
+        "modularity": 0.3934784715925917,
+        "groups": [
+          {
+            "name": "account 圏",
+            "tables": 7,
+            "units": [
+              "article",
+              "article_tag",
+              "attachment",
+              "audit_log",
+              "category",
+              "comment",
+              "tag"
+            ],
+            "hubs": [
+              "account"
+            ],
+            "glue": {
+              "FK": 5,
+              "hub契約": 4
+            }
+          },
+          {
+            "name": "purchase 圏",
+            "tables": 6,
+            "units": [
+              "customer",
+              "invoice",
+              "payment",
+              "product",
+              "purchase_item",
+              "shipment"
+            ],
+            "hubs": [
+              "purchase"
+            ],
+            "glue": {
+              "FK": 3,
+              "hub契約": 5,
+              "共起": 1
+            }
+          }
+        ]
+      },
+      {
+        "k": 3,
+        "modularity": 0.43854299178069617,
+        "groups": [
+          {
+            "name": "account 圏",
+            "tables": 7,
+            "units": [
+              "article",
+              "article_tag",
+              "attachment",
+              "audit_log",
+              "category",
+              "comment",
+              "tag"
+            ],
+            "hubs": [
+              "account"
+            ],
+            "glue": {
+              "FK": 5,
+              "hub契約": 4
+            }
+          },
+          {
+            "name": "payment",
+            "tables": 3,
+            "units": [
+              "payment",
+              "product",
+              "purchase_item"
+            ],
+            "hubs": null,
+            "glue": {
+              "FK": 1,
+              "共起": 1
+            }
+          },
+          {
+            "name": "purchase 圏",
+            "tables": 3,
+            "units": [
+              "customer",
+              "invoice",
+              "shipment"
+            ],
+            "hubs": [
+              "purchase"
+            ],
+            "glue": {
+              "FK": 1,
+              "hub契約": 3
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "bridges": [
+    {
+      "a": "article",
+      "b": "article_tag",
+      "weight": 1,
+      "side_a_size": 1,
+      "side_b_size": 1,
+      "fks": [
+        {
+          "constraint": "yii1:article_tag(mm)",
+          "child_table": "article_tag",
+          "child_columns": [
+            "article_id"
+          ],
+          "parent_table": "article",
+          "delete_rule": "NO ACTION",
+          "all_not_null": false
+        }
+      ],
+      "difficulty": "未確定(NULL 許容を判定できない FK を含む — 列定義を確認してから見積もる)",
+      "cut_level": 2,
+      "pattern": "同期コマンド + pending + 冪等キー / 存在保証 API"
+    },
+    {
+      "a": "article",
+      "b": "attachment",
+      "weight": 1,
+      "side_a_size": 1,
+      "side_b_size": 1,
+      "fks": [
+        {
+          "constraint": "yii1:Attachment→Article",
+          "child_table": "attachment",
+          "child_columns": [
+            "article_id"
+          ],
+          "parent_table": "article",
+          "delete_rule": "NO ACTION",
+          "all_not_null": false
+        }
+      ],
+      "difficulty": "未確定(NULL 許容を判定できない FK を含む — 列定義を確認してから見積もる)",
+      "cut_level": 1,
+      "pattern": "結果整合(outbox→イベント購読)or 読みレプリカ"
+    },
+    {
+      "a": "article",
+      "b": "category",
+      "weight": 1,
+      "side_a_size": 1,
+      "side_b_size": 1,
+      "fks": [
+        {
+          "constraint": "yii1:Article→Category",
+          "child_table": "article",
+          "child_columns": [
+            "category_id"
+          ],
+          "parent_table": "category",
+          "delete_rule": "NO ACTION",
+          "all_not_null": false
+        }
+      ],
+      "difficulty": "未確定(NULL 許容を判定できない FK を含む — 列定義を確認してから見積もる)",
+      "cut_level": 1,
+      "pattern": "結果整合(outbox→イベント購読)or 読みレプリカ"
+    },
+    {
+      "a": "article",
+      "b": "comment",
+      "weight": 1,
+      "side_a_size": 1,
+      "side_b_size": 1,
+      "fks": [
+        {
+          "constraint": "yii1:Comment→Article",
+          "child_table": "comment",
+          "child_columns": [
+            "article_id"
+          ],
+          "parent_table": "article",
+          "delete_rule": "NO ACTION",
+          "all_not_null": false
+        }
+      ],
+      "difficulty": "未確定(NULL 許容を判定できない FK を含む — 列定義を確認してから見積もる)",
+      "cut_level": 2,
+      "pattern": "同期コマンド + pending + 冪等キー / 存在保証 API"
+    },
+    {
+      "a": "article_tag",
+      "b": "tag",
+      "weight": 1,
+      "side_a_size": 1,
+      "side_b_size": 1,
+      "fks": [
+        {
+          "constraint": "yii1:article_tag(mm)",
+          "child_table": "article_tag",
+          "child_columns": [
+            "tag_id"
+          ],
+          "parent_table": "tag",
+          "delete_rule": "NO ACTION",
+          "all_not_null": false
+        }
+      ],
+      "difficulty": "未確定(NULL 許容を判定できない FK を含む — 列定義を確認してから見積もる)",
+      "cut_level": 1,
+      "pattern": "結果整合(outbox→イベント購読)or 読みレプリカ"
+    },
+    {
+      "a": "customer",
+      "b": "payment",
+      "weight": 1,
+      "side_a_size": 1,
+      "side_b_size": 1,
+      "fks": [
+        {
+          "constraint": "payment_customer_id_fkey",
+          "child_table": "payment",
+          "child_columns": [
+            "customer_id"
+          ],
+          "parent_table": "customer",
+          "delete_rule": "NO ACTION",
+          "all_not_null": false
+        }
+      ],
+      "difficulty": "易(NULL 許容のみ — 値参照化だけで切れる)",
+      "cut_level": 1,
+      "pattern": "結果整合(outbox→イベント購読)or 読みレプリカ"
+    },
+    {
+      "a": "customer",
+      "b": "invoice",
+      "weight": 2,
+      "side_a_size": 1,
+      "side_b_size": 1,
+      "fks": [
+        {
+          "constraint": "invoice_customer_id_fkey",
+          "child_table": "invoice",
+          "child_columns": [
+            "customer_id"
+          ],
+          "parent_table": "customer",
+          "delete_rule": "NO ACTION",
+          "all_not_null": true
+        }
+      ],
+      "difficulty": "中(NOT NULL あり — 既定値かバックフィルの設計が要る)",
+      "cut_level": 2,
+      "pattern": "同期コマンド + pending + 冪等キー / 存在保証 API"
+    },
+    {
+      "a": "product",
+      "b": "purchase_item",
+      "weight": 2,
+      "side_a_size": 1,
+      "side_b_size": 1,
+      "fks": [
+        {
+          "constraint": "purchase_item_product_id_fkey",
+          "child_table": "purchase_item",
+          "child_columns": [
+            "product_id"
+          ],
+          "parent_table": "product",
+          "delete_rule": "NO ACTION",
+          "all_not_null": true
+        }
+      ],
+      "difficulty": "中(NOT NULL あり — 既定値かバックフィルの設計が要る)",
+      "cut_level": 2,
+      "pattern": "同期コマンド + pending + 冪等キー / 存在保証 API"
+    }
+  ],
+  "thinnest_seams": null,
+  "cross_schema_fks": null,
+  "comparison": {
+    "common": {
+      "hubs": [
+        {
+          "node": "account",
+          "degree": 7
+        },
+        {
+          "node": "purchase",
+          "degree": 6
+        }
+      ],
+      "hub_threshold": 6,
+      "cascade_groups": {}
+    },
+    "coverage": {
+      "physical_read": true,
+      "logical_read": true,
+      "cooc_read": true,
+      "db_tables": 15,
+      "tables_with_physical_fk": 9,
+      "physical_fk_rate": 0.6,
+      "logical_tables": 14,
+      "relations_declared": 20,
+      "relations": 18,
+      "duplicates": 2,
+      "both": 8,
+      "logical_only": 10,
+      "physical_only": 1,
+      "observed_only": 2,
+      "undetermined": 1,
+      "cooc_tx": 10,
+      "groups": [
+        {
+          "name": "account 圏",
+          "tables": 7,
+          "db_tables": 7,
+          "with_physical_fk": 1,
+          "physical_fk_rate": 0.14285714285714285,
+          "thin": true,
+          "thin_reason": "below_average"
+        },
+        {
+          "name": "payment",
+          "tables": 3,
+          "db_tables": 3,
+          "with_physical_fk": 3,
+          "physical_fk_rate": 1
+        },
+        {
+          "name": "purchase 圏",
+          "tables": 3,
+          "db_tables": 3,
+          "with_physical_fk": 3,
+          "physical_fk_rate": 1
+        }
+      ]
+    },
+    "graphs": {
+      "combined": {
+        "fk_count": 20,
+        "modularity": 0.43854299178069617,
+        "communities": [
+          {
+            "name": "account 圏",
+            "tables": [
+              "article",
+              "article_tag",
+              "attachment",
+              "audit_log",
+              "category",
+              "comment",
+              "tag"
+            ]
+          },
+          {
+            "name": "payment",
+            "tables": [
+              "payment",
+              "product",
+              "purchase_item"
+            ]
+          },
+          {
+            "name": "purchase 圏",
+            "tables": [
+              "customer",
+              "invoice",
+              "shipment"
+            ]
+          }
+        ],
+        "isolated": []
+      },
+      "logical": {
+        "fk_count": 18,
+        "modularity": 0.4262267701878279,
+        "communities": [
+          {
+            "name": "account 圏",
+            "tables": [
+              "article",
+              "article_tag",
+              "attachment",
+              "category",
+              "comment",
+              "tag"
+            ]
+          },
+          {
+            "name": "payment",
+            "tables": [
+              "payment",
+              "product",
+              "purchase_item"
+            ]
+          },
+          {
+            "name": "purchase 圏",
+            "tables": [
+              "customer",
+              "invoice",
+              "shipment"
+            ]
+          }
+        ],
+        "isolated": [
+          "audit_log"
+        ]
+      },
+      "physical": {
+        "fk_count": 10,
+        "modularity": 0.2932041500665365,
+        "communities": [
+          {
+            "name": "account 圏",
+            "tables": [
+              "audit_log",
+              "customer",
+              "invoice",
+              "shipment"
+            ]
+          },
+          {
+            "name": "payment",
+            "tables": [
+              "payment",
+              "product",
+              "purchase_item"
+            ]
+          }
+        ],
+        "isolated": [
+          "article",
+          "article_tag",
+          "attachment",
+          "category",
+          "comment",
+          "tag"
+        ]
+      }
+    },
+    "edge_diff": {
+      "edges": [
+        {
+          "a": "article",
+          "b": "article_tag",
+          "child_table": "article_tag",
+          "child_columns": [
+            "article_id"
+          ],
+          "parent_table": "article",
+          "physical": "absent",
+          "logical": "present",
+          "observed": "present",
+          "class": "logical_only",
+          "cooc_count": 2,
+          "cooc_npmi": 0.31739380551401475
+        },
+        {
+          "a": "article",
+          "b": "attachment",
+          "child_table": "attachment",
+          "child_columns": [
+            "article_id"
+          ],
+          "parent_table": "article",
+          "physical": "absent",
+          "logical": "present",
+          "observed": "absent",
+          "class": "logical_only"
+        },
+        {
+          "a": "article",
+          "b": "category",
+          "child_table": "article",
+          "child_columns": [
+            "category_id"
+          ],
+          "parent_table": "category",
+          "physical": "absent",
+          "logical": "present",
+          "observed": "absent",
+          "class": "logical_only"
+        },
+        {
+          "a": "article",
+          "b": "comment",
+          "child_table": "comment",
+          "child_columns": [
+            "article_id"
+          ],
+          "parent_table": "article",
+          "physical": "absent",
+          "logical": "present",
+          "observed": "absent",
+          "class": "logical_only"
+        },
+        {
+          "a": "article",
+          "b": "product",
+          "physical": "absent",
+          "logical": "absent",
+          "observed": "present",
+          "class": "observed_only",
+          "cooc_count": 3,
+          "cooc_npmi": 0.424283357506555
+        },
+        {
+          "a": "article_tag",
+          "b": "tag",
+          "child_table": "article_tag",
+          "child_columns": [
+            "tag_id"
+          ],
+          "parent_table": "tag",
+          "physical": "absent",
+          "logical": "present",
+          "observed": "absent",
+          "class": "logical_only"
+        },
+        {
+          "a": "customer",
+          "b": "invoice",
+          "child_table": "invoice",
+          "child_columns": [
+            "customer_id"
+          ],
+          "parent_table": "customer",
+          "physical": "present",
+          "logical": "present",
+          "observed": "absent",
+          "class": "both"
+        },
+        {
+          "a": "customer",
+          "b": "payment",
+          "child_table": "payment",
+          "child_columns": [
+            "customer_id"
+          ],
+          "parent_table": "customer",
+          "physical": "present",
+          "logical": "absent",
+          "observed": "absent",
+          "class": "physical_only"
+        },
+        {
+          "a": "payment",
+          "b": "purchase_item",
+          "physical": "absent",
+          "logical": "absent",
+          "observed": "present",
+          "class": "observed_only",
+          "cooc_count": 2,
+          "cooc_npmi": 0.7480703635874079
+        },
+        {
+          "a": "product",
+          "b": "purchase_item",
+          "child_table": "purchase_item",
+          "child_columns": [
+            "product_id"
+          ],
+          "parent_table": "product",
+          "physical": "present",
+          "logical": "present",
+          "observed": "absent",
+          "class": "both"
+        }
+      ],
+      "counts": {
+        "both": 2,
+        "logical_only": 5,
+        "physical_only": 1,
+        "observed_only": 2,
+        "undetermined": 0
+      },
+      "hub_edges": [
+        {
+          "a": "account",
+          "b": "article",
+          "child_table": "article",
+          "child_columns": [
+            "author_id"
+          ],
+          "parent_table": "account",
+          "physical": "absent",
+          "logical": "present",
+          "observed": "absent",
+          "class": "logical_only",
+          "hubs": [
+            "account"
+          ]
+        },
+        {
+          "a": "account",
+          "b": "attachment",
+          "child_table": "attachment",
+          "child_columns": [
+            "uploaded_by"
+          ],
+          "parent_table": "account",
+          "physical": "absent",
+          "logical": "present",
+          "observed": "absent",
+          "class": "logical_only",
+          "hubs": [
+            "account"
+          ]
+        },
+        {
+          "a": "account",
+          "b": "audit_log",
+          "child_table": "audit_log",
+          "child_columns": [
+            "account_id"
+          ],
+          "parent_table": "account",
+          "physical": "present",
+          "logical": "unobserved",
+          "observed": "absent",
+          "class": "undetermined",
+          "hubs": [
+            "account"
+          ]
+        },
+        {
+          "a": "account",
+          "b": "comment",
+          "child_table": "comment",
+          "child_columns": [
+            "account_id"
+          ],
+          "parent_table": "account",
+          "physical": "absent",
+          "logical": "present",
+          "observed": "absent",
+          "class": "logical_only",
+          "hubs": [
+            "account"
+          ]
+        },
+        {
+          "a": "account",
+          "b": "customer",
+          "child_table": "customer",
+          "child_columns": [
+            "account_id"
+          ],
+          "parent_table": "account",
+          "physical": "present",
+          "logical": "present",
+          "observed": "absent",
+          "class": "both",
+          "hubs": [
+            "account"
+          ]
+        },
+        {
+          "a": "account",
+          "b": "invoice",
+          "child_table": "invoice",
+          "child_columns": [
+            "issued_by"
+          ],
+          "parent_table": "account",
+          "physical": "absent",
+          "logical": "present",
+          "observed": "absent",
+          "class": "logical_only",
+          "hubs": [
+            "account"
+          ]
+        },
+        {
+          "a": "account",
+          "b": "purchase",
+          "child_table": "purchase",
+          "child_columns": [
+            "created_by"
+          ],
+          "parent_table": "account",
+          "physical": "absent",
+          "logical": "present",
+          "observed": "absent",
+          "class": "logical_only",
+          "hubs": [
+            "account",
+            "purchase"
+          ]
+        },
+        {
+          "a": "customer",
+          "b": "purchase",
+          "child_table": "purchase",
+          "child_columns": [
+            "customer_id"
+          ],
+          "parent_table": "customer",
+          "physical": "present",
+          "logical": "present",
+          "observed": "absent",
+          "class": "both",
+          "hubs": [
+            "purchase"
+          ]
+        },
+        {
+          "a": "invoice",
+          "b": "purchase",
+          "child_table": "invoice",
+          "child_columns": [
+            "purchase_id"
+          ],
+          "parent_table": "purchase",
+          "physical": "present",
+          "logical": "present",
+          "observed": "absent",
+          "class": "both",
+          "hubs": [
+            "purchase"
+          ]
+        },
+        {
+          "a": "payment",
+          "b": "purchase",
+          "child_table": "payment",
+          "child_columns": [
+            "purchase_id"
+          ],
+          "parent_table": "purchase",
+          "physical": "present",
+          "logical": "present",
+          "observed": "present",
+          "class": "both",
+          "cooc_count": 2,
+          "cooc_npmi": 0.5693234419266069,
+          "hubs": [
+            "purchase"
+          ]
+        },
+        {
+          "a": "purchase",
+          "b": "purchase_item",
+          "child_table": "purchase_item",
+          "child_columns": [
+            "purchase_id"
+          ],
+          "parent_table": "purchase",
+          "physical": "present",
+          "logical": "present",
+          "observed": "present",
+          "class": "both",
+          "cooc_count": 3,
+          "cooc_npmi": 0.7610560044063084,
+          "hubs": [
+            "purchase"
+          ]
+        },
+        {
+          "a": "purchase",
+          "b": "shipment",
+          "child_table": "shipment",
+          "child_columns": [
+            "purchase_id"
+          ],
+          "parent_table": "purchase",
+          "physical": "present",
+          "logical": "present",
+          "observed": "present",
+          "class": "both",
+          "cooc_count": 1,
+          "cooc_npmi": 0.39794000867203755,
+          "hubs": [
+            "purchase"
+          ]
+        }
+      ],
+      "hub_counts": {
+        "both": 6,
+        "logical_only": 5,
+        "physical_only": 0,
+        "observed_only": 0,
+        "undetermined": 1
+      }
+    },
+    "community_diff": {
+      "pairs": [
+        {
+          "a": {
+            "kind": "physical",
+            "communities": 2,
+            "modularity": 0.2932041500665365,
+            "isolated": 6
+          },
+          "b": {
+            "kind": "logical",
+            "communities": 3,
+            "modularity": 0.4262267701878279,
+            "isolated": 1
+          },
+          "vertices": 13,
+          "excluded": 0,
+          "ari": 0.28440366972477066,
+          "ari_connected": 1,
+          "connected_vertices": 6,
+          "matches": [
+            {
+              "a": "account 圏",
+              "b": "purchase 圏",
+              "overlap": 3
+            },
+            {
+              "a": "payment",
+              "b": "payment",
+              "overlap": 3
+            }
+          ],
+          "moved": [
+            {
+              "table": "article",
+              "from": "",
+              "to": "account 圏",
+              "kind": "isolated_in_a"
+            },
+            {
+              "table": "article_tag",
+              "from": "",
+              "to": "account 圏",
+              "kind": "isolated_in_a"
+            },
+            {
+              "table": "attachment",
+              "from": "",
+              "to": "account 圏",
+              "kind": "isolated_in_a"
+            },
+            {
+              "table": "audit_log",
+              "from": "account 圏",
+              "to": "",
+              "kind": "isolated_in_b"
+            },
+            {
+              "table": "category",
+              "from": "",
+              "to": "account 圏",
+              "kind": "isolated_in_a"
+            },
+            {
+              "table": "comment",
+              "from": "",
+              "to": "account 圏",
+              "kind": "isolated_in_a"
+            },
+            {
+              "table": "tag",
+              "from": "",
+              "to": "account 圏",
+              "kind": "isolated_in_a"
+            }
+          ],
+          "cut_edges": [
+            {
+              "a": "customer",
+              "b": "payment",
+              "state_a": "cut",
+              "state_b": "absent"
+            }
+          ],
+          "cut_both": 0
+        },
+        {
+          "a": {
+            "kind": "physical",
+            "communities": 2,
+            "modularity": 0.2932041500665365,
+            "isolated": 6
+          },
+          "b": {
+            "kind": "combined",
+            "communities": 3,
+            "modularity": 0.43854299178069617,
+            "isolated": 0
+          },
+          "vertices": 13,
+          "excluded": 0,
+          "ari": 0.19379844961240308,
+          "ari_connected": 0.6956521739130435,
+          "connected_vertices": 7,
+          "matches": [
+            {
+              "a": "account 圏",
+              "b": "purchase 圏",
+              "overlap": 3
+            },
+            {
+              "a": "payment",
+              "b": "payment",
+              "overlap": 3
+            }
+          ],
+          "moved": [
+            {
+              "table": "article",
+              "from": "",
+              "to": "account 圏",
+              "kind": "isolated_in_a"
+            },
+            {
+              "table": "article_tag",
+              "from": "",
+              "to": "account 圏",
+              "kind": "isolated_in_a"
+            },
+            {
+              "table": "attachment",
+              "from": "",
+              "to": "account 圏",
+              "kind": "isolated_in_a"
+            },
+            {
+              "table": "audit_log",
+              "from": "account 圏",
+              "to": "account 圏",
+              "kind": "reassigned"
+            },
+            {
+              "table": "category",
+              "from": "",
+              "to": "account 圏",
+              "kind": "isolated_in_a"
+            },
+            {
+              "table": "comment",
+              "from": "",
+              "to": "account 圏",
+              "kind": "isolated_in_a"
+            },
+            {
+              "table": "tag",
+              "from": "",
+              "to": "account 圏",
+              "kind": "isolated_in_a"
+            }
+          ],
+          "cut_edges": null,
+          "cut_both": 1
+        },
+        {
+          "a": {
+            "kind": "logical",
+            "communities": 3,
+            "modularity": 0.4262267701878279,
+            "isolated": 1
+          },
+          "b": {
+            "kind": "combined",
+            "communities": 3,
+            "modularity": 0.43854299178069617,
+            "isolated": 0
+          },
+          "vertices": 13,
+          "excluded": 0,
+          "ari": 0.8206896551724138,
+          "ari_connected": 1,
+          "connected_vertices": 12,
+          "matches": [
+            {
+              "a": "account 圏",
+              "b": "account 圏",
+              "overlap": 6
+            },
+            {
+              "a": "payment",
+              "b": "payment",
+              "overlap": 3
+            },
+            {
+              "a": "purchase 圏",
+              "b": "purchase 圏",
+              "overlap": 3
+            }
+          ],
+          "moved": [
+            {
+              "table": "audit_log",
+              "from": "",
+              "to": "account 圏",
+              "kind": "isolated_in_a"
+            }
+          ],
+          "cut_edges": [
+            {
+              "a": "customer",
+              "b": "payment",
+              "state_a": "absent",
+              "state_b": "cut"
+            }
+          ],
+          "cut_both": 0
+        }
+      ]
+    }
+  },
+  "notes": [
+    "DB に FK が無く宣言だけの関係のうち、NULL 許容が判定不能なものは重み 1 を暫定で置いている — 「弱いと判明した」ではなく情報不足時の値(--show-evidence で unknown_provisional として見える)",
+    "観測範囲で共起の無い橋: article×attachment, article×category, article_tag×tag, customer×invoice, customer×payment, product×purchase_item — もう守っていない制約の可能性(ただし観測期間に注意。無いことの証明には使わない)",
+    "CASCADE 集約は「切らない」判断を機械化したもの。切りたくなったらまず CASCADE を外す設計判断が先。"
+  ]
+}

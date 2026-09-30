@@ -1,0 +1,178 @@
+スキーマ ms_a+yii1:multisource: 15 テーブル / 18 FK
+
+■ グラフ比較(--compare-graphs)— 同じ条件で Physical / Logical / Combined を解析
+  共通条件(combined から決定): hub = account, purchase(次数閾値 6)/ CASCADE 縮約 0 群
+  ここに出る差分は乖離の候補。FK が少ない見方で辺や所属が無いのは「関係が無い」の確認ではない
+
+■ Observation Coverage — 入力はどれだけ見えていたか(差分を読む前に)
+  DB のテーブル              15
+  物理 FK に関わるテーブル   2(保有率 13%)
+  ORM が解析したテーブル     14
+  宣言された関係             18 本(宣言 20 件、両側からの重複 2)
+  DB と宣言が一致            1 本
+  Logical Only / Physical Only / 判定不能   17 / 0 / 0 本
+  共起(Observed)           10 tx(観測期間はログに依る — 無いことの証明には使えない)/ Observed Only 2 対
+  分割案(combined)のグループごとの物理 FK 保有率:
+      account 圏: 6 テーブル中 DB にあるもの 6、うち物理 FK あり 0(0%)  ⚠ 入力が薄い: 物理 FK が全体より大幅に少ない — 結合が弱いのではなく、FK の整備状況を写している可能性
+      payment: 3 テーブル中 DB にあるもの 3、うち物理 FK あり 1(33%)
+      purchase 圏: 3 テーブル中 DB にあるもの 3、うち物理 FK あり 0(0%)  ⚠ 入力が薄い: 物理 FK が全体より大幅に少ない — 結合が弱いのではなく、FK の整備状況を写している可能性
+
+■ 見方ごとの分割
+  physical FK 1 本 / コミュニティ 1 / 孤立 12 / Q=0.00
+      purchase 圏(1): purchase_item
+      孤立(12): article, article_tag, attachment, audit_log, category, comment, customer, invoice, payment, product, shipment, tag
+  logical  FK 18 本 / コミュニティ 3 / 孤立 1 / Q=0.42
+      account 圏(6): article, article_tag, attachment, category, comment, tag
+      payment(3): payment, product, purchase_item
+      purchase 圏(3): customer, invoice, shipment
+      孤立(1): audit_log
+  combined FK 18 本 / コミュニティ 3 / 孤立 1 / Q=0.42
+      account 圏(6): article, article_tag, attachment, category, comment, tag
+      payment(3): payment, product, purchase_item
+      purchase 圏(3): customer, invoice, shipment
+      孤立(1): audit_log
+
+■ Edge Diff — 関係ごとに、DB の制約(Physical)・ORM の宣言(Logical)・実行時の共起(Observed)のどれにあるか
+  通常の関係(9): 一致 0 / Logical Only 7 / Physical Only 0 / Observed Only 2 / 判定不能 0
+    Logical Only(ORM にあるが DB が強制していない — FK 未整備か、意図的なアプリ側整合):
+        article_tag.article_id → article  [共起 ×2 npmi=0.32]
+        attachment.article_id → article
+        article.category_id → category
+        comment.article_id → article
+        article_tag.tag_id → tag
+        invoice.customer_id → customer
+        purchase_item.product_id → product
+    Observed Only(実行時に共起したが宣言が無い — 生 SQL / 動的クエリの調査対象):
+        article × product  [共起 ×3 npmi=0.42]
+        payment × purchase_item  [共起 ×2 npmi=0.75]
+  hub に接する関係(11): 一致 1 / Logical Only 10 / Physical Only 0 / Observed Only 0 / 判定不能 0
+    Logical Only(ORM にあるが DB が強制していない — FK 未整備か、意図的なアプリ側整合):
+        article.author_id → account
+        attachment.uploaded_by → account
+        comment.account_id → account
+        customer.account_id → account
+        invoice.issued_by → account
+        purchase.created_by → account
+        purchase.customer_id → customer
+        invoice.purchase_id → purchase
+        payment.purchase_id → purchase  [共起 ×2 npmi=0.57]
+        shipment.purchase_id → purchase  [共起 ×1 npmi=0.40]
+
+■ Community Diff — 分割はどれだけ一致するか(ARI: 1 = 同じ分割 / 0 = 偶然と同程度)
+  physical × logical: ARI 0.00(共通頂点 13)/ 両方で非孤立の頂点だけなら 判定不能(1)
+      article: (physical では孤立) → account 圏
+      article_tag: (physical では孤立) → account 圏
+      attachment: (physical では孤立) → account 圏
+      category: (physical では孤立) → account 圏
+      comment: (physical では孤立) → account 圏
+      customer: (physical では孤立) → purchase 圏
+      invoice: (physical では孤立) → purchase 圏
+      payment: (physical では孤立) → payment
+      product: (physical では孤立) → payment
+      shipment: (physical では孤立) → purchase 圏
+      tag: (physical では孤立) → account 圏
+  physical × combined: ARI 0.00(共通頂点 13)/ 両方で非孤立の頂点だけなら 判定不能(1)
+      article: (physical では孤立) → account 圏
+      article_tag: (physical では孤立) → account 圏
+      attachment: (physical では孤立) → account 圏
+      category: (physical では孤立) → account 圏
+      comment: (physical では孤立) → account 圏
+      customer: (physical では孤立) → purchase 圏
+      invoice: (physical では孤立) → purchase 圏
+      payment: (physical では孤立) → payment
+      product: (physical では孤立) → payment
+      shipment: (physical では孤立) → purchase 圏
+      tag: (physical では孤立) → account 圏
+  logical × combined: ARI 1.00(共通頂点 13)/ 両方で非孤立の頂点だけなら 1.00(12)
+
+■ 分割案(Girvan–Newman + モジュラリティ Q=0.42)— 大物 3 個への分割
+  粒度の階段(--services N で選択。ちいさく割らない選択肢も見える):
+    1 分割 Q=0.00: account 圏(12)
+    2 分割 Q=0.37: account 圏(6) | purchase 圏(6)
+    3 分割 Q=0.42: account 圏(6) | payment(3) | purchase 圏(3)
+    4 分割 Q=0.39: article(6) | payment(3) | purchase 圏(3) | account 圏(0)
+  S1(6 テーブル) / 所有 hub: account / 結束: FK 5・hub契約 3
+      article, article_tag, attachment, category, comment, tag
+  S2(3 テーブル) / 結束: FK 1・共起 1
+      payment, product, purchase_item
+  S3(3 テーブル) / 所有 hub: purchase / 結束: FK 1・hub契約 3
+      customer, invoice, shipment
+
+■ 孤立テーブル(1)— FK が無く、今日でも動かせる
+  audit_log
+
+■ shared kernel 候補(次数 >= 6 で除外)— 分割せず参照データとして共有 or 複製
+  account                        次数 6
+  purchase                       次数 6
+
+■ hub 経由のみで繋がる島(2)— hub との参照を値化すれば独立できる
+  payment
+  shipment
+
+■ 実測共起(--cooc)— 同一トランザクションで一緒に書かれたテーブル対
+  article × article_tag ×2 npmi=0.32  橋 ← 同一 tx の原子性に依存(レベル +1 済み)
+  article × comment ×1 npmi=0.22  橋 ← 同一 tx の原子性に依存(レベル +1 済み)
+  article × product ×3 npmi=0.42  FKなし ← 宣言に現れない結合
+  payment × purchase ×2 npmi=0.57  FKなし ← 宣言に現れない結合
+  payment × purchase_item ×2 npmi=0.75  FKなし ← 宣言に現れない結合
+  purchase × purchase_item ×3 npmi=0.76  FKなし ← 宣言に現れない結合
+  purchase × shipment ×1 npmi=0.40  FKなし ← 宣言に現れない結合
+
+■ hub 契約 — ユニット(ブロック/島)が shared kernel に払っている値段
+  (橋の無い大物同士の分離コストはここに出る。L1 = 結果整合で済む / L2 = 存在保証が要る)
+  article ⇄ account: →1本 ←0本 NOT NULL 0 = L1
+  attachment ⇄ account: →1本 ←0本 NOT NULL 0 = L1
+  comment ⇄ account: →1本 ←0本 NOT NULL 0 = L1
+  customer ⇄ account: →1本 ←0本 NOT NULL 0 = L1
+  customer ⇄ purchase: →0本 ←1本 NOT NULL 0 = L1
+  invoice ⇄ account: →1本 ←0本 NOT NULL 0 = L1
+  invoice ⇄ purchase: →1本 ←0本 NOT NULL 0 = L1
+  payment ⇄ purchase: →1本 ←0本 NOT NULL 0 = L1
+  purchase_item ⇄ purchase: →1本 ←0本 NOT NULL 1 = L2
+  shipment ⇄ purchase: →1本 ←0本 NOT NULL 0 = L1
+
+■ 橋 = 切断点(7 本)— 分割案の境界を実行するときの FK 作業リスト
+  article ×— article_tag   レベル 2   重み 1   分離後 1 ↔ 1 テーブル
+      article_tag.article_id(NULL不明) → article  [NO ACTION / yii1:article_tag(mm)]
+      難易度: 未確定(NULL 許容を判定できない FK を含む — 列定義を確認してから見積もる)
+      切断後に書くもの: 同期コマンド + pending + 冪等キー / 存在保証 API
+  article ×— attachment   レベル 1   重み 1   分離後 1 ↔ 1 テーブル
+      attachment.article_id(NULL不明) → article  [NO ACTION / yii1:Attachment→Article]
+      難易度: 未確定(NULL 許容を判定できない FK を含む — 列定義を確認してから見積もる)
+      切断後に書くもの: 結果整合(outbox→イベント購読)or 読みレプリカ
+  article ×— category   レベル 1   重み 1   分離後 1 ↔ 1 テーブル
+      article.category_id(NULL不明) → category  [NO ACTION / yii1:Article→Category]
+      難易度: 未確定(NULL 許容を判定できない FK を含む — 列定義を確認してから見積もる)
+      切断後に書くもの: 結果整合(outbox→イベント購読)or 読みレプリカ
+  article ×— comment   レベル 2   重み 1   分離後 1 ↔ 1 テーブル
+      comment.article_id(NULL不明) → article  [NO ACTION / yii1:Comment→Article]
+      難易度: 未確定(NULL 許容を判定できない FK を含む — 列定義を確認してから見積もる)
+      切断後に書くもの: 同期コマンド + pending + 冪等キー / 存在保証 API
+  article_tag ×— tag   レベル 1   重み 1   分離後 1 ↔ 1 テーブル
+      article_tag.tag_id(NULL不明) → tag  [NO ACTION / yii1:article_tag(mm)]
+      難易度: 未確定(NULL 許容を判定できない FK を含む — 列定義を確認してから見積もる)
+      切断後に書くもの: 結果整合(outbox→イベント購読)or 読みレプリカ
+  customer ×— invoice   レベル 1   重み 1   分離後 1 ↔ 1 テーブル
+      invoice.customer_id(NULL不明) → customer  [NO ACTION / yii1:Invoice→Customer]
+      難易度: 未確定(NULL 許容を判定できない FK を含む — 列定義を確認してから見積もる)
+      切断後に書くもの: 結果整合(outbox→イベント購読)or 読みレプリカ
+  product ×— purchase_item   レベル 1   重み 1   分離後 1 ↔ 1 テーブル
+      purchase_item.product_id(NULL不明) → product  [NO ACTION / yii1:PurchaseItem→Product]
+      難易度: 未確定(NULL 許容を判定できない FK を含む — 列定義を確認してから見積もる)
+      切断後に書くもの: 結果整合(outbox→イベント購読)or 読みレプリカ
+
+■ ブロック(2-辺連結成分)— 内部は密。これ以上の分割は段階 2 の設計判断
+  B0  (1 tables) article
+  B1  (1 tables) article_tag
+  B2  (1 tables) attachment
+  B3  (1 tables) category
+  B4  (1 tables) comment
+  B5  (1 tables) customer
+  B6  (1 tables) invoice
+  B7  (1 tables) product
+  B8  (1 tables) purchase_item
+  B9  (1 tables) tag
+
+注: DB に FK が無く宣言だけの関係のうち、NULL 許容が判定不能なものは重み 1 を暫定で置いている — 「弱いと判明した」ではなく情報不足時の値(--show-evidence で unknown_provisional として見える)
+注: 観測範囲で共起の無い橋: article×attachment, article×category, article_tag×tag, customer×invoice, product×purchase_item — もう守っていない制約の可能性(ただし観測期間に注意。無いことの証明には使わない)
+注: CASCADE 集約は「切らない」判断を機械化したもの。切りたくなったらまず CASCADE を外す設計判断が先。

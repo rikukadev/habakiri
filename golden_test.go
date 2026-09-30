@@ -22,18 +22,25 @@ var updateGolden = flag.Bool("update", false, "testdata/golden を現在の出�
 var goldenCases = []struct {
 	name string
 	args []string
+	// textOnly: text / JSON だけを固定する(図は比較モードで変わらないので重ねて持たない)。
+	textOnly bool
 }{
-	{"rails", []string{"--rails", "testdata/railsapp"}},
-	{"yii1", []string{"--yii1", "testdata/yii1app"}},
-	{"rails-cooc", []string{"--rails", "testdata/railsapp", "--cooc", "testdata/cooc-rails.txt"}},
-	{"yii1-cooc", []string{"--yii1", "testdata/yii1app", "--cooc", "testdata/cooc-yii1.txt"}},
-	{"postgres", []string{"--schema-json", "testdata/postgres-fixture.scan.json"}},
+	{name: "rails", args: []string{"--rails", "testdata/railsapp"}},
+	{name: "yii1", args: []string{"--yii1", "testdata/yii1app"}},
+	{name: "rails-cooc", args: []string{"--rails", "testdata/railsapp", "--cooc", "testdata/cooc-rails.txt"}},
+	{name: "yii1-cooc", args: []string{"--yii1", "testdata/yii1app", "--cooc", "testdata/cooc-yii1.txt"}},
+	{name: "postgres", args: []string{"--schema-json", "testdata/postgres-fixture.scan.json"}},
 	// ここから下は v0.6.0 で増えた入力(併用・--graph・--show-evidence)。
 	// v0.5.0 には無い経路なので、現行の出力を固定している。
-	{"merged", []string{"--schema-json", "testdata/yii1app.scan.json", "--yii1", "testdata/yii1app"}},
-	{"merged-evidence", []string{"--schema-json", "testdata/yii1app.scan.json", "--yii1", "testdata/yii1app", "--show-evidence"}},
-	{"merged-physical", []string{"--schema-json", "testdata/yii1app.scan.json", "--yii1", "testdata/yii1app", "--graph", "physical"}},
-	{"merged-logical", []string{"--schema-json", "testdata/yii1app.scan.json", "--yii1", "testdata/yii1app", "--graph", "logical"}},
+	{name: "merged", args: []string{"--schema-json", "testdata/yii1app.scan.json", "--yii1", "testdata/yii1app"}},
+	{name: "merged-evidence", args: []string{"--schema-json", "testdata/yii1app.scan.json", "--yii1", "testdata/yii1app", "--show-evidence"}},
+	{name: "merged-physical", args: []string{"--schema-json", "testdata/yii1app.scan.json", "--yii1", "testdata/yii1app", "--graph", "physical"}},
+	{name: "merged-logical", args: []string{"--schema-json", "testdata/yii1app.scan.json", "--yii1", "testdata/yii1app", "--graph", "logical"}},
+	// v0.7.0 の比較モード。合成スキーマ A(FK がほぼ無い)/ B(一部だけ整備)。
+	{name: "compare-a", textOnly: true, args: []string{"--schema-json", "testdata/multisource/a.scan.json", "--yii1", "testdata/multisource",
+		"--compare-graphs", "--cooc", "testdata/multisource/cooc.txt"}},
+	{name: "compare-b", textOnly: true, args: []string{"--schema-json", "testdata/multisource/b.scan.json", "--yii1", "testdata/multisource",
+		"--compare-graphs", "--cooc", "testdata/multisource/cooc.txt"}},
 }
 
 func runCLI(t *testing.T, args ...string) []byte {
@@ -76,6 +83,9 @@ func TestGolden(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			checkGolden(t, c.name+".txt", runCLI(t, c.args...))
 			checkGolden(t, c.name+".json", runCLI(t, append(c.args[:len(c.args):len(c.args)], "--json")...))
+			if c.textOnly {
+				return
+			}
 			for flagName, suffix := range map[string]string{
 				"--svg": ".svg", "--svg-cut": ".cut.svg", "--svg-partition": ".partition.svg",
 			} {

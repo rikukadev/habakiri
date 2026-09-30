@@ -148,12 +148,43 @@ func TestSchemaABPhysicalFollowsFKCoverage(t *testing.T) {
 	})
 }
 
+// Coverage: A の物理 FK 保有率が B より低いことが数値で出る。宣言側の数字は同じ。
+func TestSchemaABCoverage(t *testing.T) {
+	ca, cb := BuildComparison(loadAB(t, "a")).Coverage, BuildComparison(loadAB(t, "b")).Coverage
+	if ca.PhysicalFKRate == nil || cb.PhysicalFKRate == nil || *ca.PhysicalFKRate >= *cb.PhysicalFKRate {
+		t.Fatalf("A の保有率 < B の保有率 を期待: %v / %v", ca.PhysicalFKRate, cb.PhysicalFKRate)
+	}
+	if ca.TablesWithPhysicalFK != 2 || cb.TablesWithPhysicalFK != 9 || ca.DBTables != 15 || cb.DBTables != 15 {
+		t.Errorf("物理 FK に関わるテーブル: A=%d B=%d / DB テーブル: A=%d B=%d",
+			ca.TablesWithPhysicalFK, cb.TablesWithPhysicalFK, ca.DBTables, cb.DBTables)
+	}
+	if ca.Relations != cb.Relations || ca.RelationsDeclared != cb.RelationsDeclared || ca.LogicalTables != cb.LogicalTables {
+		t.Errorf("宣言側の数字が A と B で違う: %+v / %+v", ca.Coverage, cb.Coverage)
+	}
+	if ca.Both != 1 || cb.Both != 8 || cb.PhysicalOnly != 1 || cb.Undetermined != 1 {
+		t.Errorf("分類の件数: A both=%d / B both=%d physical_only=%d undetermined=%d",
+			ca.Both, cb.Both, cb.PhysicalOnly, cb.Undetermined)
+	}
+
+	// B: FK を張っていない記事側のグループにだけ「入力が薄い」旗が立つ
+	thin := map[string]bool{}
+	for _, g := range cb.Groups {
+		thin[g.Name] = g.Thin
+	}
+	if len(cb.Groups) != 2 || !thin["account 圏"] || thin["purchase 圏"] {
+		t.Errorf("B の旗: %+v", cb.Groups)
+	}
+}
+
 // CLI 経路: --compare-graphs は併用が前提。
 func TestCLICompareGraphs(t *testing.T) {
 	out := string(runCLI(t, "--schema-json", "testdata/multisource/b.scan.json",
 		"--yii1", "testdata/multisource", "--compare-graphs"))
 	for _, want := range []string{
 		"■ グラフ比較(--compare-graphs)",
+		"■ Observation Coverage",
+		"物理 FK に関わるテーブル   9(保有率 60%)",
+		"⚠ 入力が薄い",
 		"hub = account, purchase",
 		"physical × logical: ARI",
 		"Physical Only(DB の制約はあるが ORM に宣言が無い",
