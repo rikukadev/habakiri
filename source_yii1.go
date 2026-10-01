@@ -387,7 +387,7 @@ func yiiToScan(dir string, models map[string]*yiiModel, prefix string, dynamic m
 			if cascaded[cc] == nil {
 				cascaded[cc] = map[string]bool{}
 			}
-			for t := range targets {
+			for _, t := range sortedKeys(targets) { // map 順で積むと出力が実行ごとに揺れる
 				names = append(names, t)
 				cascaded[cc][t] = true
 				if tt, ok := tableOf(t); ok {
@@ -414,7 +414,7 @@ func yiiToScan(dir string, models map[string]*yiiModel, prefix string, dynamic m
 			}
 		}
 		var hits []string
-		for t := range targets {
+		for _, t := range sortedKeys(targets) {
 			if tt, ok := tableOf(t); ok {
 				hits = append(hits, t)
 				res.Suspects = append(res.Suspects, Suspect{FromTable: m.tableName, ToTable: tt, Strong: true})
@@ -442,7 +442,7 @@ func yiiToScan(dir string, models map[string]*yiiModel, prefix string, dynamic m
 			names[strings.SplitN(w[1], ".", 2)[0]] = true
 		}
 		var hits []string
-		for n := range names {
+		for _, n := range sortedKeys(names) {
 			for _, r := range m.relations {
 				if r.name == n && r.target != cc {
 					hits = append(hits, r.target)
@@ -1183,4 +1183,14 @@ func parseYiiRelations(rawSrc, path string) ([]yiiRelation, map[string]int) {
 		rels = append(rels, rel)
 	}
 	return rels, skipped
+}
+
+// sortedKeys は集合を名前順に並べる(疑いの並びを実行ごとに揺らさないため)。
+func sortedKeys(set map[string]bool) []string {
+	out := make([]string, 0, len(set))
+	for k := range set {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
