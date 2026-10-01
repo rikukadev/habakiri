@@ -39,6 +39,7 @@ func run(prog string, args []string, stdout, stderr io.Writer) int {
 		"DSN。MySQL (user:pass@tcp(host:3306)/dbname) または Postgres (postgres://user:pass@host:5432/dbname)。環境変数 HABAKIRI_DSN でも可")
 	railsDir := fs.String("rails", "", "Rails アプリのルート(または app/models)を静的に読む。DB 接続不要")
 	yii1Dir := fs.String("yii1", "", "Yii 1.x アプリのルート(または protected/models)を静的に読む。DB 接続不要")
+	bundleFile := fs.String("bundle", "", "影テーブル(履歴・アーカイブ)を本体と 1 頂点に束ねる規則のファイル(1 行 1 規則: suffix _version / prefix archive_)")
 	relationsFile := fs.String("relations", "", "メタデータの関係一覧(TSV: 子<TAB>列<TAB>親)を読む。関連を実行時に組み立てるアプリ向け。子と親はテーブル名か、静的ソースのモデルのクラス名")
 	schemaJSON := fs.String("schema-json", "", "--dump-schema で書き出したスキャン結果を DSN の代わりに読む(DB に繋げない環境へスキーマだけ持ち出して解析する)")
 	graph := fs.String("graph", "", "グラフの見方: physical(DB が強制する FK のみ)/ logical(ORM の宣言のみ)/ combined(統合)。既定は入力に応じる(DB だけ → physical、静的ソースだけ → logical、併用 → combined)")
@@ -167,6 +168,16 @@ func run(prog string, args []string, stdout, stderr io.Writer) int {
 	default:
 		sc = logic
 	}
+	// 影テーブルを本体に束ねる(射影と比較の前。全部の見方に同じ束ね方が当たる)
+	var bundleRename map[string]string
+	if *bundleFile != "" {
+		rules, err := LoadBundleRules(*bundleFile)
+		if err != nil {
+			errln(prog+":", err)
+			return 2
+		}
+		sc, bundleRename = BundleTables(sc, rules)
+	}
 	merged := sc // 射影前(比較はここから 3 つの見方を作る)
 	// --graph を明示したときだけ射影する。既定は入力に応じた見方で、
 	// それは射影なしの sc そのもの(単独ソースの出力を 1 バイトも変えない)。
@@ -185,7 +196,7 @@ func run(prog string, args []string, stdout, stderr io.Writer) int {
 			errln(prog+":", err)
 			return 1
 		}
-		sc.Cooc = cooc
+		sc.Cooc = renameCooc(cooc, bundleRename)
 		sc.CoocNoWeight = !*coocWeight
 	}
 

@@ -1,0 +1,24 @@
+{
+  "schema": "shop",
+  "dialect": "mysql",
+  "tables": [
+    "archive_orders",
+    "customers",
+    "customers_version",
+    "ghost_version",
+    "order_items",
+    "orders",
+    "orders_version"
+  ],
+  "fks": [
+    {"constraint": "fk_items_order", "child_table": "order_items", "child_columns": ["order_id"],
+     "parent_table": "orders", "delete_rule": "CASCADE", "all_not_null": true},
+    {"constraint": "fk_orders_customer", "child_table": "orders", "child_columns": ["customer_id"],
+     "parent_table": "customers", "delete_rule": "NO ACTION", "all_not_null": true},
+    {"constraint": "fk_orders_version_customer", "child_table": "orders_version", "child_columns": ["customer_id"],
+     "parent_table": "customers", "delete_rule": "NO ACTION", "all_not_null": true},
+    {"constraint": "fk_orders_version_order", "child_table": "orders_version", "child_columns": ["id"],
+     "parent_table": "orders", "delete_rule": "CASCADE", "all_not_null": true}
+  ],
+  "cross_schema_fks": null
+}
