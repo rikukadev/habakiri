@@ -5,19 +5,23 @@
 // 最大になった時点のコミュニティを分割案とする。
 //
 // グラフの作り方(すべて決定的):
-//   ノード = ユニット(ブロック/島)+ hub
-//   辺     = 橋(重み = 橋の重み)
-//          + 宣言外の疑い[強](重み 1)
-//          + hub 契約(重み = 3 × FK本数 / hub次数 — 二部グラフ射影の定石。
-//            store のような万能 hub が全体を糊付けするのを次数で抑える)
+//
+//	ノード = ユニット(ブロック/島)+ hub
+//	辺     = 橋(重み = 橋の重み)
+//	       + 宣言外の疑い[強](重み 1)
+//	       + hub 契約(重み = 3 × FK本数 / hub次数 — 二部グラフ射影の定石。
+//	         store のような万能 hub が全体を糊付けするのを次数で抑える)
 //
 // 乱数・時刻・map 順への依存なし。同点は辞書順で解決する。
 package main
 
 import (
 	"math"
+	"runtime"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 )
 
 // ServiceGroup は分割案のコミュニティ 1 つ。
@@ -40,8 +44,8 @@ const coocNPMIThreshold = 0.3
 // Levels は粒度の階段 — Girvan–Newman のデンドログラムを吸着後処理まで
 // かけた各段で、粗い分割(2 個・3 個…)から細かい分割までを全部持つ。
 type Partition struct {
-	Groups     []ServiceGroup   `json:"groups"`
-	Modularity float64          `json:"modularity"`
+	Groups     []ServiceGroup `json:"groups"`
+	Modularity float64        `json:"modularity"`
 	// MaxModularity: 階段全体での Q 最大。--services N で粗い段を選んだとき、
 	// 差分(Max - 現在)が「組織が課した境界の制約コスト」の定量になる。
 	MaxModularity float64          `json:"max_modularity"`
@@ -104,60 +108,188 @@ func (g *pgraph) addEdge(a, b string, w float64) {
 
 // edgeBetweenness: Brandes(重み付き・距離 = 1/重み)。決定的。
 func edgeBetweenness(nodes int, adj [][]int, w map[[2]int]float64) map[[2]int]float64 {
+	all := make([]int, nodes)
+	for i := range all {
+		all[i] = i
+	}
 	eb := map[[2]int]float64{}
+	accumulateBetweenness(nodes, adj, w, all, eb)
+	return eb
+}
+
+// accumulateBetweenness は sources(昇順)を始点とする寄与を eb に足す。
+//
+// Girvan–Newman で辺を外したとき、値が変わるのはその辺があった連結成分の
+// 中の辺だけ。成分の外の始点からの寄与は 0 なので、成分の中の始点だけで
+// 足し直せば、全体を計算し直したのと 1 ビットも違わない(足す順序も同じ
+// 始点の昇順)。大規模スキーマ(1,000 テーブル超)で分割に数分かかっていた
+// 原因(#65)。
+//
+// Dijkstra はヒープで回す。(距離, 番号) の順に取り出すので、線形探索
+// (距離最小、同点は番号最小)と同じ順序になり、結果は変わらない。
+func accumulateBetweenness(nodes int, adj [][]int, w map[[2]int]float64, sources []int, eb map[[2]int]float64) {
 	key := func(a, b int) [2]int {
 		if a > b {
 			a, b = b, a
 		}
 		return [2]int{a, b}
 	}
-	for s := 0; s < nodes; s++ {
-		// Dijkstra(小さいグラフなので線形探索で十分・決定的)
-		dist := make([]float64, nodes)
-		sigma := make([]float64, nodes)
-		done := make([]bool, nodes)
-		preds := make([][]int, nodes)
-		for i := range dist {
-			dist[i] = math.Inf(1)
-		}
-		dist[s], sigma[s] = 0, 1
-		var order []int
-		for {
-			u, best := -1, math.Inf(1)
-			for i := 0; i < nodes; i++ {
-				if !done[i] && dist[i] < best {
-					u, best = i, dist[i]
-				}
+	// 内側のループで map を引かないよう、辺の長さ(1/重み)と辺の番号を
+	// 隣接と並べて持つ
+	length := make([][]float64, nodes)
+	edgeID := make([][]int, nodes)
+	var edges [][2]int
+	idOf := map[[2]int]int{}
+	for u := range adj {
+		length[u] = make([]float64, len(adj[u]))
+		edgeID[u] = make([]int, len(adj[u]))
+		for k, v := range adj[u] {
+			kk := key(u, v)
+			length[u][k] = 1 / w[kk]
+			id, ok := idOf[kk]
+			if !ok {
+				id = len(edges)
+				idOf[kk] = id
+				edges = append(edges, kk)
 			}
-			if u < 0 {
-				break
-			}
-			done[u] = true
-			order = append(order, u)
-			for _, v := range adj[u] {
-				d := dist[u] + 1/w[key(u, v)]
-				const eps = 1e-12
-				if d < dist[v]-eps {
-					dist[v] = d
-					sigma[v] = sigma[u]
-					preds[v] = []int{u}
-				} else if math.Abs(d-dist[v]) <= eps {
-					sigma[v] += sigma[u]
-					preds[v] = append(preds[v], u)
-				}
-			}
-		}
-		delta := make([]float64, nodes)
-		for i := len(order) - 1; i >= 0; i-- {
-			v := order[i]
-			for _, u := range preds[v] {
-				c := sigma[u] / sigma[v] * (1 + delta[v])
-				eb[key(u, v)] += c
-				delta[u] += c
-			}
+			edgeID[u][k] = id
 		}
 	}
-	return eb
+
+	// 始点ごとの寄与は互いに独立なので並列に求め、最後に始点の昇順で足し込む。
+	// 1 つの始点が同じ辺に寄与するのは 1 回だけなので、足す順序は逐次計算と
+	// 同じ(始点の昇順)になり、浮動小数の和も 1 ビットも変わらない。
+	type contrib struct {
+		edge int
+		c    float64
+	}
+	results := make([][]contrib, len(sources))
+	workers := runtime.GOMAXPROCS(0)
+	if workers > len(sources) {
+		workers = len(sources)
+	}
+	var wg sync.WaitGroup
+	next := int64(-1)
+	for wkr := 0; wkr < workers; wkr++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			dist := make([]float64, nodes)
+			sigma := make([]float64, nodes)
+			done := make([]bool, nodes)
+			delta := make([]float64, nodes)
+			preds := make([][]int, nodes) // 先行ノード
+			predE := make([][]int, nodes) // 先行ノードからの辺の番号
+			order := make([]int, 0, nodes)
+			var h distHeap
+			for {
+				si := int(atomic.AddInt64(&next, 1))
+				if si >= len(sources) {
+					return
+				}
+				s := sources[si]
+				for i := range dist {
+					dist[i] = math.Inf(1)
+					sigma[i] = 0
+					done[i] = false
+					delta[i] = 0
+					preds[i] = preds[i][:0]
+					predE[i] = predE[i][:0]
+				}
+				order = order[:0]
+				h = h[:0]
+				dist[s], sigma[s] = 0, 1
+				h.push(distItem{0, s})
+				for len(h) > 0 {
+					it := h.pop()
+					u := it.v
+					if done[u] || it.d != dist[u] {
+						continue // 古い項目
+					}
+					done[u] = true
+					order = append(order, u)
+					for k, v := range adj[u] {
+						d := dist[u] + length[u][k]
+						const eps = 1e-12
+						if d < dist[v]-eps {
+							dist[v] = d
+							sigma[v] = sigma[u]
+							preds[v] = append(preds[v][:0], u)
+							predE[v] = append(predE[v][:0], edgeID[u][k])
+							h.push(distItem{d, v})
+						} else if math.Abs(d-dist[v]) <= eps {
+							sigma[v] += sigma[u]
+							preds[v] = append(preds[v], u)
+							predE[v] = append(predE[v], edgeID[u][k])
+						}
+					}
+				}
+				var out []contrib
+				for i := len(order) - 1; i >= 0; i-- {
+					v := order[i]
+					for pi, u := range preds[v] {
+						c := sigma[u] / sigma[v] * (1 + delta[v])
+						out = append(out, contrib{predE[v][pi], c})
+						delta[u] += c
+					}
+				}
+				results[si] = out
+			}
+		}()
+	}
+	wg.Wait()
+	for _, out := range results {
+		for _, ct := range out {
+			eb[edges[ct.edge]] += ct.c
+		}
+	}
+}
+
+// distHeap は (距離, 番号) の小さい順に取り出す二分ヒープ。
+type distItem struct {
+	d float64
+	v int
+}
+
+type distHeap []distItem
+
+func (h distItem) less(o distItem) bool { return h.d < o.d || (h.d == o.d && h.v < o.v) }
+
+func (h *distHeap) push(it distItem) {
+	*h = append(*h, it)
+	a := *h
+	for i := len(a) - 1; i > 0; {
+		p := (i - 1) / 2
+		if !a[i].less(a[p]) {
+			break
+		}
+		a[i], a[p] = a[p], a[i]
+		i = p
+	}
+}
+
+func (h *distHeap) pop() distItem {
+	a := *h
+	top := a[0]
+	last := len(a) - 1
+	a[0] = a[last]
+	a = a[:last]
+	for i := 0; ; {
+		l, r, m := 2*i+1, 2*i+2, i
+		if l < len(a) && a[l].less(a[m]) {
+			m = l
+		}
+		if r < len(a) && a[r].less(a[m]) {
+			m = r
+		}
+		if m == i {
+			break
+		}
+		a[i], a[m] = a[m], a[i]
+		i = m
+	}
+	*h = a
+	return top
 }
 
 // modularity: 現在の連結成分をコミュニティとみなした重み付き Q(元の全辺で評価)。
@@ -175,7 +307,7 @@ func modularity(nodes int, keys [][2]int, orig map[[2]int]float64, comp []int) f
 	if m == 0 {
 		return 0
 	}
-	in := make([]float64, nodes)  // comp id < nodes
+	in := make([]float64, nodes) // comp id < nodes
 	tot := make([]float64, nodes)
 	for _, k := range keys {
 		if comp[k[0]] == comp[k[1]] {
@@ -390,7 +522,7 @@ func BuildPartition(a *Analysis) *Partition {
 	initComp := components(n, cur)
 	snapshots = append(snapshots, initComp)
 	prevCount := countComps(initComp)
-	for len(cur) > 0 {
+	buildAdj := func() [][]int {
 		adj := make([][]int, n)
 		for k := range cur {
 			adj[k[0]] = append(adj[k[0]], k[1])
@@ -399,7 +531,10 @@ func BuildPartition(a *Analysis) *Partition {
 		for i := range adj {
 			sort.Ints(adj[i])
 		}
-		eb := edgeBetweenness(n, adj, cur)
+		return adj
+	}
+	eb := edgeBetweenness(n, buildAdj(), cur)
+	for len(cur) > 0 {
 		var target [2]int
 		best := -1.0
 		var keys [][2]int
@@ -418,11 +553,26 @@ func BuildPartition(a *Analysis) *Partition {
 			}
 		}
 		delete(cur, target)
+		delete(eb, target)
 		comp := components(n, cur)
 		if c := countComps(comp); c > prevCount {
 			snapshots = append(snapshots, comp)
 			prevCount = c
 		}
+		// 外した辺の両端がいる成分だけ計算し直す(ほかの成分の値は変わらない)
+		affected := map[int]bool{comp[target[0]]: true, comp[target[1]]: true}
+		var sources []int
+		for v := 0; v < n; v++ {
+			if affected[comp[v]] {
+				sources = append(sources, v)
+			}
+		}
+		for k := range cur {
+			if affected[comp[k[0]]] {
+				delete(eb, k)
+			}
+		}
+		accumulateBetweenness(n, buildAdj(), cur, sources, eb)
 	}
 
 	// 各スナップショットに吸着をかけ、粒度の階段を作る(重複段は畳む)
@@ -535,29 +685,51 @@ func BuildPartition(a *Analysis) *Partition {
 func absorbSmall(bestComp []int, n int, nodes []string, hubDeg map[string]int,
 	unitTables map[string]int, origKeys [][2]int, orig map[[2]int]float64) []int {
 	const smallGroupMax = 3 // このテーブル数未満は独立サービスにしない
-	for {
-		compTables := map[int]int{}
-		for i, name := range nodes {
-			if _, isHub := hubDeg[name]; !isHub {
-				compTables[bestComp[i]] += unitTables[name]
-			}
+	// 各ノードに接する辺の位置(origKeys の添字)。吸着先の集計で全辺を
+	// 走査しないため。添字の昇順に足すので、和の順序は全辺を回すのと同じ。
+	incident := make([][]int, n)
+	for ei, k := range origKeys {
+		incident[k[0]] = append(incident[k[0]], ei)
+		incident[k[1]] = append(incident[k[1]], ei)
+	}
+	// コミュニティごとのテーブル数(hub 以外のノードを持つコミュニティだけ)と
+	// メンバーを差分で持ち回る。吸着のたびに全ノードを数え直さないため。
+	compTables := map[int]int{}
+	members := map[int][]int{}
+	for i, name := range nodes {
+		members[bestComp[i]] = append(members[bestComp[i]], i)
+		if _, isHub := hubDeg[name]; !isHub {
+			compTables[bestComp[i]] += unitTables[name]
 		}
+	}
+	smallSet := map[int]bool{} // テーブル数が規定未満のコミュニティ
+	for c, t := range compTables {
+		if t < smallGroupMax {
+			smallSet[c] = true
+		}
+	}
+	for len(smallSet) > 0 {
+		// 最小のテーブル数、同点は番号の小さい方(全体を番号順に見るのと同じ選び方)
 		small, smallT := -1, smallGroupMax
-		var cids []int
-		for c := range compTables {
-			cids = append(cids, c)
-		}
-		sort.Ints(cids)
-		for _, c := range cids {
-			if compTables[c] < smallT {
-				small, smallT = c, compTables[c]
+		for c := range smallSet {
+			if t := compTables[c]; t < smallT || (t == smallT && c < small) {
+				small, smallT = c, t
 			}
 		}
-		if small < 0 {
-			break
+		var touching []int
+		seenEdge := map[int]bool{}
+		for _, v := range members[small] {
+			for _, ei := range incident[v] {
+				if !seenEdge[ei] {
+					seenEdge[ei] = true
+					touching = append(touching, ei)
+				}
+			}
 		}
+		sort.Ints(touching)
 		gain := map[int]float64{}
-		for _, k := range origKeys {
+		for _, ei := range touching {
+			k := origKeys[ei]
 			wt := orig[k]
 			ca, cb := bestComp[k[0]], bestComp[k[1]]
 			if ca == small && cb != small {
@@ -579,6 +751,12 @@ func absorbSmall(bestComp []int, n int, nodes []string, hubDeg map[string]int,
 			}
 		}
 		if target < 0 {
+			// どこにも繋がっていない: 最大のコミュニティへ(番号順に見て最初の最大)
+			var cids []int
+			for c := range compTables {
+				cids = append(cids, c)
+			}
+			sort.Ints(cids)
 			for _, c := range cids {
 				if c != small && (target < 0 || compTables[c] > compTables[target]) {
 					target = c
@@ -588,10 +766,20 @@ func absorbSmall(bestComp []int, n int, nodes []string, hubDeg map[string]int,
 				break
 			}
 		}
-		for i := range bestComp {
-			if bestComp[i] == small {
-				bestComp[i] = target
-			}
+		for _, v := range members[small] {
+			bestComp[v] = target
+		}
+		members[target] = append(members[target], members[small]...)
+		delete(members, small)
+		if t, ok := compTables[small]; ok {
+			compTables[target] += t
+			delete(compTables, small)
+		}
+		delete(smallSet, small)
+		if compTables[target] < smallGroupMax {
+			smallSet[target] = true
+		} else {
+			delete(smallSet, target)
 		}
 	}
 	return bestComp
