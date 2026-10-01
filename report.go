@@ -11,21 +11,28 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"sort"
 	"strings"
 )
 
 // Analysis は解析の全結果(JSON 出力の形そのもの)。
 type Analysis struct {
-	Schema        string              `json:"schema"`
-	TableCount    int                 `json:"table_count"`
-	FKCount       int                 `json:"fk_count"`
-	Isolated      []string            `json:"isolated_tables"` // FK が 1 本も無い = 既に自由
-	Hubs          []Hub               `json:"shared_kernel"`   // 除外した高次数ノード
-	HubThreshold  int                 `json:"hub_threshold"`
-	CascadeGroups map[string][]string `json:"cascade_groups"`   // ライフサイクル一体(縮約済み)
-	Blocks        [][]string          `json:"blocks"`           // 2-辺連結成分(縮約後ノード名)
-	Edges         []EdgeReport        `json:"edges"`            // 縮約後の全エッジ(図の機械生成と外部消費用)
+	Schema       string   `json:"schema"`
+	TableCount   int      `json:"table_count"`
+	FKCount      int      `json:"fk_count"`
+	Isolated     []string `json:"isolated_tables"` // FK が 1 本も無い = 既に自由
+	Hubs         []Hub    `json:"shared_kernel"`   // 除外した高次数ノード
+	HubThreshold int      `json:"hub_threshold"`
+	// NearHubs: 閾値に届かず hub にならなかった高次数ノード(次数が閾値の 1/3 以上、
+	// 上位 10)。大規模スキーマでは参照マスタがここに並び、全体を 1 つの塊に
+	// 糊付けしたまま分割が成立しないことがある(#64)。
+	NearHubs []Hub `json:"near_hubs,omitempty"`
+	// HubScan: --hub-scan の結果(閾値ごとの分割の比較)。
+	HubScan       []HubScanRow        `json:"hub_scan,omitempty"`
+	CascadeGroups map[string][]string `json:"cascade_groups"` // ライフサイクル一体(縮約済み)
+	Blocks        [][]string          `json:"blocks"`         // 2-辺連結成分(縮約後ノード名)
+	Edges         []EdgeReport        `json:"edges"`          // 縮約後の全エッジ(図の機械生成と外部消費用)
 	// Islands: hub 経由でしか外と繋がらない島(hub 除去後にエッジ 0 本)。
 	// 「もう hub との契約だけ整理すれば独立できる」塊で、孤立の次に自由度が高い。
 	Islands []IslandReport `json:"islands"`
@@ -36,13 +43,13 @@ type Analysis struct {
 	// 「FKなし・共起あり」= 宣言に現れない不変条件の候補。
 	Cooc []CoocReport `json:"cooc,omitempty"`
 	// Partition: Girvan–Newman + モジュラリティ最大化による「大物数個」への分割案。
-	Partition *Partition `json:"partition,omitempty"`
-	Bridges       []BridgeReport      `json:"bridges"`          // 切断点
-	ThinSeams     []SeamReport        `json:"thinnest_seams"`   // 橋が無いときの候補
-	CrossFKs      []FK                `json:"cross_schema_fks"` // スキーマ跨ぎ(最優先で殲滅)
-	Suspects      []Suspect           `json:"suspects,omitempty"` // FK ではない結合の疑い(静的ソース由来)
-	coocNoWeight  bool                // 共起を分割グラフに算入しない(--cooc-weight=false)
-	Candidates    []Candidate         `json:"candidates,omitempty"` // 切り出し候補ランキング(--churn 指定時)
+	Partition    *Partition     `json:"partition,omitempty"`
+	Bridges      []BridgeReport `json:"bridges"`            // 切断点
+	ThinSeams    []SeamReport   `json:"thinnest_seams"`     // 橋が無いときの候補
+	CrossFKs     []FK           `json:"cross_schema_fks"`   // スキーマ跨ぎ(最優先で殲滅)
+	Suspects     []Suspect      `json:"suspects,omitempty"` // FK ではない結合の疑い(静的ソース由来)
+	coocNoWeight bool           // 共起を分割グラフに算入しない(--cooc-weight=false)
+	Candidates   []Candidate    `json:"candidates,omitempty"` // 切り出し候補ランキング(--churn 指定時)
 	// FKs: 全 FK とその出自(--show-evidence のときだけ)。hub へ向かう FK は
 	// Edges に現れないので、出自を漏れなく見せるには別に一覧が要る。
 	FKs []FK `json:"fks,omitempty"`
@@ -53,7 +60,7 @@ type Analysis struct {
 	// 単独解析の既存出力は変えない)。
 	showEvidence bool
 	unknownAware bool
-	Notes         []string            `json:"notes"`
+	Notes        []string `json:"notes"`
 }
 
 // cutPattern は切断レベル → 「切断後に書くもの」の既定パターン名。
@@ -144,15 +151,15 @@ func Analyze(sc *ScanResult, hubThreshold int) *Analysis {
 // fixed == nil の経路は従来と 1 行も変わらない。
 func analyze(sc *ScanResult, hubThreshold int, fixed *CommonConditions) *Analysis {
 	a := &Analysis{
-		Schema:     sc.Schema,
-		TableCount: len(sc.Tables),
-		FKCount:    len(sc.FKs) + len(sc.CrossFKs),
-		CrossFKs:   sc.CrossFKs,
-		Suspects:   sc.Suspects,
+		Schema:       sc.Schema,
+		TableCount:   len(sc.Tables),
+		FKCount:      len(sc.FKs) + len(sc.CrossFKs),
+		CrossFKs:     sc.CrossFKs,
+		Suspects:     sc.Suspects,
 		coocNoWeight: sc.CoocNoWeight,
 		showEvidence: sc.ShowEvidence,
 		unknownAware: sc.ShowEvidence || sc.Merged || sc.Projected,
-		Notes:      append([]string(nil), sc.Notes...), // ソース固有の注意を合流
+		Notes:        append([]string(nil), sc.Notes...), // ソース固有の注意を合流
 	}
 
 	// 孤立テーブル(どの FK にも現れない)
@@ -565,6 +572,10 @@ func analyze(sc *ScanResult, hubThreshold int, fixed *CommonConditions) *Analysi
 	}
 
 	a.Partition = BuildPartition(a)
+	a.NearHubs = nearHubs(preHubEdges, a.Hubs, hubThreshold)
+	if note := nearHubNote(a); note != "" {
+		a.Notes = append(a.Notes, note)
+	}
 
 	if a.showEvidence {
 		for i := range a.Edges {
@@ -594,6 +605,9 @@ func WriteText(w io.Writer, a *Analysis) {
 	p("スキーマ %s: %d テーブル / %d FK", a.Schema, a.TableCount, a.FKCount)
 	p("")
 
+	if len(a.HubScan) > 0 {
+		WriteHubScan(w, a.HubScan)
+	}
 	if a.Comparison != nil {
 		WriteComparisonText(w, a.Comparison)
 	}
@@ -740,7 +754,7 @@ func WriteText(w io.Writer, a *Analysis) {
 					strings.Join(fk.ChildCols, ","), nullLabel(fk, a.unknownAware), fk.ParentTable, fk.DeleteRule, fk.Constraint)
 			}
 			p("      難易度: %s", b.Difficulty)
-	p("      切断後に書くもの: %s", b.Pattern)
+			p("      切断後に書くもの: %s", b.Pattern)
 		}
 		p("")
 	} else {
@@ -838,4 +852,124 @@ func WriteMermaid(w io.Writer, a *Analysis) {
 
 func sanitizeID(s string) string {
 	return strings.NewReplacer("-", "_", ".", "_", " ", "_").Replace(s)
+}
+
+// nearHubs は hub にならなかった高次数ノード(次数 ≥ max(6, 閾値/3)、上位 10)。
+func nearHubs(edges map[Pair]*Edge, hubs []Hub, threshold int) []Hub {
+	isHub := map[string]bool{}
+	for _, h := range hubs {
+		isHub[h.Node] = true
+	}
+	deg := map[string]int{}
+	for p := range edges {
+		deg[p.A]++
+		deg[p.B]++
+	}
+	floor := threshold / 3
+	if floor < 6 {
+		floor = 6
+	}
+	var out []Hub
+	for n, d := range deg {
+		if !isHub[n] && d >= floor && d < threshold {
+			out = append(out, Hub{Node: n, Degree: d})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Degree != out[j].Degree {
+			return out[i].Degree > out[j].Degree
+		}
+		return out[i].Node < out[j].Node
+	})
+	if len(out) > 10 {
+		out = out[:10]
+	}
+	return out
+}
+
+// nearHubNote は、分割の最大グループが全体の過半を占める(1 つの塊に糊付け
+// されている)ときだけ、外していない高次数ノードと --hub の目安を出す。
+func nearHubNote(a *Analysis) string {
+	if len(a.NearHubs) == 0 || a.Partition == nil || len(a.Partition.Groups) == 0 {
+		return ""
+	}
+	total, largest := 0, 0
+	for _, g := range a.Partition.Groups {
+		total += g.Tables
+		if g.Tables > largest {
+			largest = g.Tables
+		}
+	}
+	if total == 0 || largest*2 <= total {
+		return ""
+	}
+	var names []string
+	for _, h := range a.NearHubs {
+		names = append(names, fmt.Sprintf("%s(%d)", h.Node, h.Degree))
+	}
+	last := a.NearHubs[len(a.NearHubs)-1].Degree
+	return fmt.Sprintf(
+		"分割の最大グループが %d / %d テーブルを占める — hub 閾値 %d に届かない高次数ノードが全体を糊付けしている可能性: %s。--hub %d まで下げるとこれらも shared kernel に回る(--hub-scan で閾値ごとの分割を比べられる)",
+		largest, total, a.HubThreshold, strings.Join(names, ", "), last)
+}
+
+// HubScanRow は --hub-scan の 1 段。
+type HubScanRow struct {
+	Threshold int     `json:"threshold"`
+	Hubs      int     `json:"hubs"`
+	BestQ     float64 `json:"best_modularity"`
+	BestK     int     `json:"best_k"`         // Q 最大の段のグループ数
+	Largest   int     `json:"largest_tables"` // Q 最大の段の最大グループのテーブル数
+	Tables    int     `json:"tables"`         // 分割に入ったテーブル数(hub と孤立を除く)
+}
+
+// HubScanThresholds は --hub-scan で試す閾値: 起点から半分ずつ、6 まで(最大 6 段)。
+func HubScanThresholds(start int) []int {
+	var out []int
+	for t := start; t >= 6 && len(out) < 6; t /= 2 {
+		out = append(out, t)
+	}
+	if len(out) == 0 {
+		out = []int{start}
+	}
+	return out
+}
+
+// HubScanRowOf は 1 つの閾値の解析結果を 1 行にまとめる。
+func HubScanRowOf(a *Analysis) HubScanRow {
+	row := HubScanRow{Threshold: a.HubThreshold, Hubs: len(a.Hubs)}
+	if a.Partition == nil {
+		return row
+	}
+	row.BestQ = a.Partition.MaxModularity
+	for _, lv := range a.Partition.Levels {
+		if math.Abs(lv.Modularity-a.Partition.MaxModularity) <= 1e-9 {
+			row.BestK = lv.K
+			for _, g := range lv.Groups {
+				row.Tables += g.Tables
+				if g.Tables > row.Largest {
+					row.Largest = g.Tables
+				}
+			}
+			break
+		}
+	}
+	return row
+}
+
+// WriteHubScan は --hub-scan の表(text)。推奨はしない — Q は hub を外すほど
+// 上がりやすく、細かく割れた段が「大物数個」とは限らないため。
+func WriteHubScan(w io.Writer, rows []HubScanRow) {
+	p := func(format string, args ...any) { _, _ = fmt.Fprintf(w, format+"\n", args...) }
+	p("■ hub 閾値の比較(--hub-scan)— 閾値を半分ずつ下げて分割を回した")
+	p("  (Q は hub を外すほど上がりやすい。最大グループの大きさと群数も見て選ぶ。--hub N で確定)")
+	p("  %8s %6s %8s %6s %14s", "--hub", "hub 数", "Q 最大", "群数", "最大グループ")
+	for _, r := range rows {
+		share := ""
+		if r.Tables > 0 {
+			share = fmt.Sprintf("%d (%.0f%%)", r.Largest, 100*float64(r.Largest)/float64(r.Tables))
+		}
+		p("  %8d %6d %8.2f %6d %14s", r.Threshold, r.Hubs, r.BestQ, r.BestK, share)
+	}
+	p("")
 }

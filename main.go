@@ -61,6 +61,7 @@ func run(prog string, args []string, stdout, stderr io.Writer) int {
 	baseline := fs.String("baseline", "", "過去の --json 出力と比較し、結合の逆行(新規 FK ペア・hub 契約増・跨ぎ FK 増)があれば exit 3")
 	d2Out := fs.String("d2", "", "D2 スクリプトをこのファイルへ書き出す(d2 out.d2 out.svg で描画)")
 	htmlOut := fs.String("html", "", "図と切断計画をまとめた自己完結 HTML をこのファイルへ書き出す")
+	hubScan := fs.Bool("hub-scan", false, "hub 閾値を半分ずつ下げた段(最大 6 段)で分割を回し、hub 数・Q・最大グループの大きさを並べる(大規模スキーマで閾値を決める材料)")
 	hub := fs.Int("hub", 0, "hub 判定の次数閾値(0 = 自動: max(6, ノード数の 15%))")
 	showVersion := fs.Bool("version", false, "バージョン表示")
 	fs.Usage = func() {
@@ -208,6 +209,11 @@ func run(prog string, args []string, stdout, stderr io.Writer) int {
 	}
 
 	a := Analyze(sc, *hub)
+	if *hubScan {
+		for _, t := range HubScanThresholds(a.HubThreshold) {
+			a.HubScan = append(a.HubScan, HubScanRowOf(Analyze(sc, t)))
+		}
+	}
 	if *compareGraphs {
 		a.Comparison = BuildComparison(PrepareComparison(merged, *hub, *services, *coocWeight))
 	}
