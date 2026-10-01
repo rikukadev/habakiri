@@ -1,0 +1,3 @@
+# 影テーブルを本体と 1 頂点に束ねる規則(テスト用)
+suffix _version     # 履歴テーブル
+prefix archive_     # アーカイブ

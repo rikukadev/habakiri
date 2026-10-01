@@ -29,6 +29,7 @@ $ habakiri --dsn "..." --yii1 /path/to/yii1app            # 併用: DB の FK �
 | `--compare-graphs` | Physical / Logical / Combined を同じ条件で解析して比べる(Coverage / Edge Diff / Community Diff)。DB と静的ソースの併用が前提 |
 | `--show-evidence` | 各 FK の出自(証拠の位置・DB が強制しているか・NULL 許容・重みの理由)を text / JSON / HTML に出す |
 | `--dump-schema FILE` / `--schema-json FILE` | DB スキャン結果(テーブル名と FK 定義のみ)の書き出し / 読み込み。DB に繋げない環境へスキーマだけ持ち出して解析する |
+| `--bundle FILE` | 影テーブル(履歴・アーカイブ)を本体と 1 頂点に束ねる規則(1 行 1 規則: `suffix _version` / `prefix archive_`)。本体が実在するときだけ束ね、本体と同じ関係になる FK は 1 本にまとめる。名前の慣習はアプリごとなので、ツールは自動では見抜かない |
 | `--hub N` | hub 判定の次数閾値(既定 max(6, 15%)。融合したら下げる) |
 | `--hub-scan` | hub 閾値を半分ずつ下げた段(最大 6 段)で分割を回し、hub 数・Q・最大グループの大きさを並べる。大規模スキーマで閾値を決める材料(推奨はしない) |
 | `--services N` | 分割案のグループ数の希望(既定はモジュラリティ最大) |
